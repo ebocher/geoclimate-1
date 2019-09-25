@@ -334,6 +334,7 @@ def minimumBuildingSpacing() {
  * @return A database table name.
  *
  * @author Jérémy Bernard
+ * @author Erwan Bocher, CNRS
  */
 def roadDistance() {
     def final GEOMETRIC_FIELD = "the_geom"
@@ -351,44 +352,36 @@ def roadDistance() {
 
             // To avoid overwriting the output files of this step, a unique identifier is created
             // Temporary table names
-            def build_buffer = "build_buffer$uuid"
             def road_surf = "road_surf$uuid"
-            def road_within_buffer = "road_within_buffer$uuid"
+            def road_distance_buffer = "road_distance_buffer$uuid"
 
             // The name of the outputTableName is constructed
             def outputTableName = prefixName + "_" + BASE_NAME
 
             datasource.getSpatialTable(inputBuildingTableName).id_build.createIndex()
 
-            // The buffer is created
-            datasource.execute "DROP TABLE IF EXISTS $build_buffer; " +
-                    "CREATE TABLE $build_buffer AS SELECT $ID_FIELD_BU," +
-                    " ST_BUFFER($GEOMETRIC_FIELD, $bufferDist)" +
-                    " AS $GEOMETRIC_FIELD FROM $inputBuildingTableName; " +
-                    "CREATE INDEX IF NOT EXISTS buff_ids ON $build_buffer($GEOMETRIC_FIELD) USING RTREE"
+
             // The road surfaces are created
             datasource.execute "CREATE TABLE $road_surf AS " +
                     "SELECT ST_BUFFER($GEOMETRIC_FIELD, $ROAD_WIDTH/2,'endcap=flat') " +
                     "AS $GEOMETRIC_FIELD FROM $inputRoadTableName; " +
                     "CREATE INDEX IF NOT EXISTS buff_ids ON $road_surf($GEOMETRIC_FIELD) USING RTREE"
-            // The roads located within the buffer are identified
-            datasource.execute "DROP TABLE IF EXISTS $road_within_buffer; CREATE TABLE $road_within_buffer AS " +
-                    "SELECT a.$ID_FIELD_BU, b.$GEOMETRIC_FIELD FROM $build_buffer a, $road_surf b " +
-                    "WHERE a.$GEOMETRIC_FIELD && b.$GEOMETRIC_FIELD AND " +
-                    "ST_INTERSECTS(a.$GEOMETRIC_FIELD, b.$GEOMETRIC_FIELD); " +
-                    "CREATE INDEX IF NOT EXISTS with_buff_id ON $road_within_buffer($ID_FIELD_BU); "
+            // The roads located within a distance are identified
+            datasource.execute """DROP TABLE IF EXISTS $road_distance_buffer; 
+                CREATE TABLE $road_distance_buffer AS 
+                    SELECT a.$ID_FIELD_BU, MIN(ST_Distance(a.$GEOMETRIC_FIELD, b.$GEOMETRIC_FIELD)) as  building_road_distance 
+                    FROM $inputBuildingTableName a, $road_surf b 
+                    WHERE st_expand(a.$GEOMETRIC_FIELD, $bufferDist) && b.$GEOMETRIC_FIELD group by a.$ID_FIELD_BU;
+                    create index on $road_distance_buffer($ID_FIELD_BU);"""
 
-            // The minimum distance is calculated between each building and the surrounding roads (the minimum
-            // distance is set to the bufferDist value for buildings having no road within a bufferDist meters
-            // distance)
-            datasource.execute "DROP TABLE IF EXISTS $outputTableName; CREATE TABLE " +
-                    "$outputTableName(building_road_distance DOUBLE, $ID_FIELD_BU INTEGER) AS " +
-                    "(SELECT COALESCE(MIN(st_distance(a.$GEOMETRIC_FIELD, b.$GEOMETRIC_FIELD)), $bufferDist), " +
-                    "a.$ID_FIELD_BU FROM $road_within_buffer b RIGHT JOIN $inputBuildingTableName a " +
-                    "ON a.$ID_FIELD_BU = b.$ID_FIELD_BU GROUP BY a.$ID_FIELD_BU)"
 
+            datasource.execute """DROP TABLE IF EXISTS $outputTableName; 
+                CREATE TABLE $outputTableName AS 
+                    SELECT a.$ID_FIELD_BU, case when b.building_road_distance > 100 then 100 
+                    when b.building_road_distance is null then 0 else b.building_road_distance end as building_road_distance
+                    FROM $inputBuildingTableName a left join  $road_distance_buffer b on a.$ID_FIELD_BU=b.$ID_FIELD_BU;"""
             // The temporary tables are deleted
-            datasource.execute "DROP TABLE IF EXISTS $build_buffer, $road_within_buffer, $road_surf"
+            datasource.execute "DROP TABLE IF EXISTS  $road_distance_buffer, $road_surf"
 
             [outputTableName: outputTableName]
         }

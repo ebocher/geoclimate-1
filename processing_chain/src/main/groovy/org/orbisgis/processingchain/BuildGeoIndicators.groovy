@@ -508,7 +508,7 @@ def computeRSUIndicators() {
                 def roofAreaDist = computeRoofAreaDist.results.outputTableName
                 finalTablesToJoin.put(roofAreaDist, columnIdRsu)
             }
-
+            /*Disable it because it's a long process and the algorithm must be reviewed
             // rsu_projected_facade_area_distribution
             if (indicatorUse.contains("LCZ") || indicatorUse.contains("TEB")) {
                 if (!indicatorUse.contains("TEB")) {
@@ -516,6 +516,7 @@ def computeRSUIndicators() {
                     [0, 50, 200]
                     facadeDensNumberOfDirection: 8
                 }
+
                 def computeProjFacadeDist = Geoindicators.RsuIndicators.projectedFacadeAreaDistribution()
                 if (!computeProjFacadeDist([buildingTable    : buildingTable,
                                             rsuTable         : rsuTable,
@@ -529,6 +530,7 @@ def computeRSUIndicators() {
                 def projFacadeDist = computeProjFacadeDist.results.outputTableName
                 intermediateJoin.put(projFacadeDist, columnIdRsu)
             }
+            */
 
             // Create an intermediate join tables to have all needed input fields for future indicator calculation
             def computeIntermediateJoin = Geoindicators.DataUtils.joinTables()

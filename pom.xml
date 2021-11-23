@@ -1,4 +1,3 @@
-<?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
@@ -9,22 +8,25 @@
         <artifactId>orbisparent</artifactId>
         <version>1.0.3-SNAPSHOT</version>
     </parent>
-    <artifactId>geoclimate</artifactId>
+    <groupId>org.orbisgis.geoclimate</groupId>
+    <artifactId>geoclimate-parent</artifactId>
     <packaging>pom</packaging>
-    <version>1.0-SNAPSHOT</version>
+    <version>0.0.1</version>
     <modules>
         <module>geoindicators</module>
-        <module>prepare_data</module>
-        <module>processing_chain</module>
+        <module>bdtopo_v2</module>
+        <module>osm</module>
+        <module>geoclimate</module>
     </modules>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.build.timestamp.format>YYYY-MM-dd</maven.build.timestamp.format>
-        <maven.compiler.target>8</maven.compiler.target>
-        <maven.compiler.source>8</maven.compiler.source>
+        <maven.compiler.target>1.8</maven.compiler.target>
+        <maven.compiler.source>1.8</maven.compiler.source>
         <buildNumber>${maven.build.timestamp}</buildNumber>
         <site.basedir>${project.basedir}</site.basedir>
+        <log4j-version>2.14.0</log4j-version>
     </properties>
 
     <licenses>
@@ -44,11 +46,11 @@
             <organization>CNRS, Lab-STICC UMR 6285</organization>
         </developer>
         <developer>
-            <name>Jonathan Lao</name>
+            <name>Elisabeth Le Saux Wiederhold</name>
             <organization>UBS, Lab-STICC UMR 6285</organization>
         </developer>
         <developer>
-            <name>Elisabeth Le Saux Wiederhold</name>
+            <name>Jonathan Lao</name>
             <organization>UBS, Lab-STICC UMR 6285</organization>
         </developer>
         <developer>
@@ -65,19 +67,39 @@
     <dependencyManagement>
         <dependencies>
             <dependency>
-                <groupId>org.orbisgis</groupId>
-                <artifactId>data-manager</artifactId>
-                <version>1.0.0-SNAPSHOT</version>
-            </dependency>
-            <dependency>
-                <groupId>org.orbisgis</groupId>
-                <artifactId>process-manager</artifactId>
-                <version>1.0.0-SNAPSHOT</version>
-            </dependency>
-            <dependency>
-                <groupId>org.orbisgis</groupId>
+                <groupId>org.orbisgis.geoclimate</groupId>
                 <artifactId>osm</artifactId>
-                <version>1.0.0-SNAPSHOT</version>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.orbisgis.geoclimate</groupId>
+                <artifactId>bdtopo_v2</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.orbisgis.geoclimate</groupId>
+                <artifactId>geoindicators</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.orbisgis.geoclimate</groupId>
+                <artifactId>geoclimate</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.logging.log4j</groupId>
+                <artifactId>log4j-slf4j-impl</artifactId>
+                <version>${log4j-version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.logging.log4j</groupId>
+                <artifactId>log4j-api</artifactId>
+                <version>${log4j-version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.logging.log4j</groupId>
+                <artifactId>log4j-core</artifactId>
+                <version>${log4j-version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
@@ -136,7 +158,7 @@
     <repositories>
         <repository>
             <id>orbisgis-release</id>
-            <url>http://nexus-ng.orbisgis.org/repository/orbisgis-release</url>
+            <url>https://nexus.orbisgis.org/repository/orbisgis-release</url>
             <snapshots>
                 <enabled>false</enabled>
             </snapshots>
@@ -146,7 +168,7 @@
         </repository>
         <repository>
             <id>orbisgis-snapshot</id>
-            <url>http://nexus-ng.orbisgis.org/repository/orbisgis-snapshot</url>
+            <url>https://nexus.orbisgis.org/repository/orbisgis-snapshot</url>
             <snapshots>
                 <enabled>true</enabled>
                 <updatePolicy>always</updatePolicy>
@@ -156,7 +178,6 @@
             </releases>
         </repository>
     </repositories>
-
 
     <reporting>
         <plugins>

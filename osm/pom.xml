@@ -1,62 +1,57 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <parent>
         <artifactId>geoclimate-parent</artifactId>
         <groupId>org.orbisgis.geoclimate</groupId>
-        <version>0.0.1</version>
+        <version>1.0.1-SNAPSHOT</version>
         <relativePath>../</relativePath>
     </parent>
     <modelVersion>4.0.0</modelVersion>
     <artifactId>osm</artifactId>
-    <groupId>org.orbisgis.geoclimate</groupId>
-    <version>0.0.1</version>
+    <version>1.0.1-SNAPSHOT</version>
+
+    <!-- Project Information -->
+    <name>osm</name>
+    <description>GeoClimate module to format the OSM data into the GeoClimate abstract model.
+    </description>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <maven.build.timestamp.format>YYYY-MM-dd</maven.build.timestamp.format>
-        <buildNumber>${maven.build.timestamp}</buildNumber>
     </properties>
 
     <dependencies>
         <dependency>
-            <groupId>org.orbisgis.orbisanalysis</groupId>
-            <artifactId>osm</artifactId>
-            <exclusions>
-                <exclusion>
-                    <groupId>org.slf4j</groupId>
-                    <artifactId>slf4j-simple</artifactId>
-                </exclusion>
-            </exclusions>
+            <groupId>org.orbisgis.geoclimate</groupId>
+            <artifactId>worldpoptools</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.codehaus.groovy</groupId>
+            <groupId>org.orbisgis.geoclimate</groupId>
+            <artifactId>common-utils</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.orbisgis.geoclimate</groupId>
+            <artifactId>osmtools</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.groovy</groupId>
             <artifactId>groovy</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.codehaus.groovy</groupId>
+            <groupId>org.apache.groovy</groupId>
             <artifactId>groovy-json</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.orbisgis.orbisdata.datamanager</groupId>
-            <artifactId>jdbc</artifactId>
-            <exclusions>
-                <exclusion>
-                    <groupId>org.slf4j</groupId>
-                    <artifactId>slf4j-simple</artifactId>
-                </exclusion>
-            </exclusions>
+            <groupId>org.apache.groovy</groupId>
+            <artifactId>groovy-sql</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.orbisgis.orbisdata.processmanager</groupId>
-            <artifactId>process</artifactId>
-            <exclusions>
-                <exclusion>
-                    <groupId>org.slf4j</groupId>
-                    <artifactId>slf4j-simple</artifactId>
-                </exclusion>
-            </exclusions>
+            <groupId>org.orbisgis.data</groupId>
+            <artifactId>h2gis</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.orbisgis.data</groupId>
+            <artifactId>postgis</artifactId>
         </dependency>
         <dependency>
             <groupId>org.orbisgis.geoclimate</groupId>
@@ -64,29 +59,20 @@
             <version>${project.parent.version}</version>
         </dependency>
         <dependency>
-            <groupId>org.slf4j</groupId>
-            <artifactId>slf4j-api</artifactId>
+            <groupId>org.orbisgis.geoclimate</groupId>
+            <artifactId>common-utils</artifactId>
         </dependency>
-        <dependency>
-            <groupId>org.apache.logging.log4j</groupId>
-            <artifactId>log4j-slf4j-impl</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.logging.log4j</groupId>
-            <artifactId>log4j-api</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.logging.log4j</groupId>
-            <artifactId>log4j-core</artifactId>
-        </dependency>
+
         <!-- Test dependencies -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter-api</artifactId>
+            <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter-engine</artifactId>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 

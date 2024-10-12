@@ -1,29 +1,119 @@
-{"tags" : {
-    "landuse":["commercial", "residential", "retail", "industrial"]
-
-},
-    "columns":[ "landuse","industrial"],
-    "type": {
-        "commercial": {
-            "landuse": [
-                "commercial",
-                "retail"
-            ]
-        },
-        "residential": {
-            "landuse": [
-                "residential"
-            ]
-        },
-        "heavy_industry:industrial": {
-            "industrial": [
-                "refinery"
-            ]
-        },
-        "light_industry:industrial": {
-            "landuse": [
-                "industrial"
-            ]
-        }
+{
+  "tags": {
+    "landuse": [
+      "commercial",
+      "residential",
+      "retail",
+      "industrial",
+      "construction",
+      "military",
+      "railway",
+      "farmyard"
+    ],
+    "construction": [],
+    "amenity": [
+      "school",
+      "university",
+      "research_institute",
+      "community_centre"
+    ],
+    "power": [
+      "plant",
+      "substation"
+    ]
+  },
+  "columns": [
+    "landuse",
+    "industrial",
+    "construction",
+    "amenity",
+    "building",
+    "power"
+  ],
+  "type": {
+    "education": {
+      "landuse": [
+        "education"
+      ]
+    },
+    "university": {
+      "amenity": [
+        "university"
+      ]
+    },
+    "research_institute": {
+      "amenity": [
+        "research_institute"
+      ]
+    },
+    "school": {
+      "amenity": [
+        "school"
+      ]
+    },
+    "construction": {
+      "landuse": [
+        "construction"
+      ]
+    },
+    "commercial": {
+      "landuse": [
+        "commercial"
+      ]
+    },
+    "retail": {
+      "landuse": [
+        "retail"
+      ]
+    },
+    "residential": {
+      "landuse": [
+        "residential"
+      ]
+    },
+    "industrial": {
+      "landuse": [
+        "industrial"
+      ],
+      "power": [
+        "plant",
+        "substation"
+      ]
+    },
+    "port": {
+      "landuse": [
+        "port"
+      ]
+    },
+    "refinery": {
+      "industrial": [
+        "refinery"
+      ]
+    },
+    "government": {
+      "landuse": [
+        "institutional"
+      ]
+    },
+    "community_centre": {
+      "amenity": [
+        "community_centre"
+      ]
+    },
+    "military": {
+      "landuse": [
+        "military"
+      ]
+    },
+    "railway": {
+      "landuse": [
+        "railway"
+      ]
+    },
+    "farmyard": {
+      "landuse": [
+        "farmyard"
+      ]
     }
+  }
 }

@@ -1,18 +1,39 @@
 {
-  "tags" : {
+  "tags": {
     "highway": [
-        "residential", 
-        "pedestrian"
+      "residential",
+      "pedestrian",
+      "rest_area"
     ],
     "amenity": [
-        "parking",
-        "bicycle_parking",
-        "car_sharing",
-        "parking_place"
+      "parking",
+      "bicycle_parking",
+      "car_sharing",
+      "parking_place"
     ],
-    "leisure": ["pitch"],
-    "railway": ["platform"],
-    "landuse": ["railway","construction"]
+    "leisure": [
+      "pitch"
+    ],
+    "railway": [
+      "platform"
+    ],
+    "landuse": [
+      "railway",
+      "construction",
+      "industrial",
+      "commercial",
+      "retail"
+    ],
+    "area:aeroway": [
+      "runway"
+    ],
+    "aeroway": [
+      "apron"
+    ],
+    "power": [
+      "plant",
+      "substation"
+    ]
   },
   "columns": [
     "highway",
@@ -21,6 +42,63 @@
     "area",
     "leisure",
     "parking",
-    "landuse"
-  ]
+    "landuse",
+    "area:aeroway",
+    "aeroway",
+    "building",
+    "power"
+  ],
+  "type": {
+    "parking": {
+      "amenity": [
+        "parking",
+        "bicycle_parking",
+        "car_sharing",
+        "parking_place"
+      ],
+      "highway": [
+        "rest_area"
+      ]
+    },
+    "industrial": {
+      "landuse": [
+        "railway",
+        "construction",
+        "industrial"
+      ],
+      "area:aeroway": [
+        "runway"
+      ],
+      "aeroway": [
+        "apron"
+      ],
+      "railway": [
+        "platform"
+      ],
+      "power": [
+        "plant",
+        "substation"
+      ]
+    },
+    "commercial": {
+      "landuse": [
+        "commercial"
+      ]
+    },
+    "sport": {
+      "leisure": [
+        "pitch"
+      ]
+    },
+    "residential": {
+      "highway": [
+        "residential"
+      ]
+    },
+    "pedestrian": {
+      "highway": [
+        "pedestrian"
+      ]
+    }
+  }
 }

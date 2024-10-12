@@ -1,57 +1,64 @@
+/**
+ * GeoClimate is a geospatial processing toolbox for environmental and climate studies
+ * <a href="https://github.com/orbisgis/geoclimate">https://github.com/orbisgis/geoclimate</a>.
+ *
+ * This code is part of the GeoClimate project. GeoClimate is free software;
+ * you can redistribute it and/or modify it under the terms of the GNU
+ * Lesser General Public License as published by the Free Software Foundation;
+ * version 3.0 of the License.
+ *
+ * GeoClimate is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public License
+ * for more details <http://www.gnu.org/licenses/>.
+ *
+ *
+ * For more information, please consult:
+ * <a href="https://github.com/orbisgis/geoclimate">https://github.com/orbisgis/geoclimate</a>
+ *
+ */
 package org.orbisgis.geoclimate.geoindicators
 
 import com.thoughtworks.xstream.XStream
+import com.thoughtworks.xstream.io.xml.StaxDriver
+import com.thoughtworks.xstream.security.NoTypePermission
+import com.thoughtworks.xstream.security.NullPermission
+import com.thoughtworks.xstream.security.PrimitiveTypePermission
 import org.junit.jupiter.api.BeforeAll
-import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
+import org.orbisgis.data.H2GIS
+import org.orbisgis.data.dataframe.DataFrame
 import org.orbisgis.geoclimate.Geoindicators
-import org.orbisgis.orbisdata.datamanager.dataframe.DataFrame
 import smile.classification.DataFrameClassifier
 import smile.validation.Accuracy
 import smile.validation.Validation
+
 import java.util.zip.GZIPInputStream
 
-import static org.junit.jupiter.api.Assertions.assertEquals
-import static org.junit.jupiter.api.Assertions.fail
-import static org.orbisgis.orbisdata.datamanager.jdbc.h2gis.H2GIS.open
+import static org.junit.jupiter.api.Assertions.*
 
 class TypologyClassificationTests {
 
-    private static def h2GIS
-
-    private static def randomDbName() {
-        "${TypologyClassificationTests.simpleName}_${UUID.randomUUID().toString().replaceAll "-", "_"}"
-    }
+    @TempDir
+    static File folder
+    private static H2GIS h2GIS
 
     @BeforeAll
     static void beforeAll() {
-        h2GIS = open "./target/${randomDbName()};AUTO_SERVER=TRUE"
-    }
-
-    @BeforeEach
-    void beforeEach() {
-        h2GIS.executeScript(getClass().getResourceAsStream("data_for_tests.sql"))
+        h2GIS = H2GIS.open(folder.getAbsolutePath() + File.separator + "typologyClassificationTests;AUTO_SERVER=TRUE")
     }
 
     @Test
     void identifyLczTypeTest() {
-        def pavg = Geoindicators.TypologyClassification.identifyLczType()
-        assert pavg.execute([
-                rsuLczIndicators : "rsu_test_lcz_indics",
-                rsuAllIndicators : "rsu_test_all_indics_for_lcz",
-                normalisationType: "AVG",
-                mapOfWeights     : ["sky_view_factor"             : 1,
-                                    "aspect_ratio"                : 1,
-                                    "building_surface_fraction"   : 1,
-                                    "impervious_surface_fraction" : 1,
-                                    "pervious_surface_fraction"   : 1,
-                                    "height_of_roughness_elements": 1,
-                                    "terrain_roughness_length"    : 1],
-                prefixName       : "test",
-                datasource       : h2GIS])
+        h2GIS.executeScript(this.getClass().getResourceAsStream("data_for_tests.sql"))
+        def pavg = Geoindicators.TypologyClassification.identifyLczType(h2GIS,
+                "rsu_test_lcz_indics", "rsu_test_all_indics_for_lcz",
+                "AVG", "test")
+        assertNotNull(pavg)
         def results = [:]
-        h2GIS."$pavg.results.outputTableName".eachRow { row ->
+        h2GIS.getTable(pavg).eachRow { row ->
             def id = row.id_rsu
             results[id] = [:]
             results[id]["LCZ_PRIMARY"] = row.LCZ_PRIMARY
@@ -73,7 +80,7 @@ class TypologyClassificationTests {
         assert 101 == results[5]["LCZ_PRIMARY"]
         assert 104 == results[6]["LCZ_PRIMARY"]
         assert 105 == results[7]["LCZ_PRIMARY"]
-        assert 101 == results[18]["LCZ_PRIMARY"]
+        assert 107 == results[18]["LCZ_PRIMARY"]
         assert 8 == results[19]["LCZ_PRIMARY"]
         assert 4 == results[20]["LCZ_PRIMARY"]
 
@@ -89,24 +96,14 @@ class TypologyClassificationTests {
                     WHERE a.id_rsu = b.id_rsu;  
         """
 
-        def pmed = Geoindicators.TypologyClassification.identifyLczType()
-        assert pmed([
-                rsuLczIndicators : "buff_rsu_test_lcz_indics",
-                rsuAllIndicators : "buff_rsu_test_all_indics_for_lcz",
-                normalisationType: "MEDIAN",
-                mapOfWeights     : ["sky_view_factor"             : 1,
-                                    "aspect_ratio"                : 1,
-                                    "building_surface_fraction"   : 1,
-                                    "impervious_surface_fraction" : 1,
-                                    "pervious_surface_fraction"   : 1,
-                                    "height_of_roughness_elements": 1,
-                                    "terrain_roughness_length"    : 1],
-                prefixName       : "test",
-                datasource       : h2GIS])
+        def pmed = Geoindicators.TypologyClassification.identifyLczType(
+                h2GIS, "buff_rsu_test_lcz_indics",
+                "buff_rsu_test_all_indics_for_lcz",
+                "MEDIAN", "test")
+        assertNotNull(pmed)
+        assert h2GIS.getColumnNames(pmed).contains("THE_GEOM")
 
-        assert h2GIS."$pmed.results.outputTableName".columns.contains("THE_GEOM")
-
-        h2GIS."$pmed.results.outputTableName".eachRow {
+        h2GIS.getTable(pmed).eachRow {
             row ->
                 if (row.id_rsu == 1) {
                     assert 1 == row.LCZ_PRIMARY
@@ -129,30 +126,30 @@ class TypologyClassificationTests {
                 }
         }
         // Test with real indicator values (Montreuil ID_RSU 795), (l'haye les roses ID_RSU 965 and 1026)
-        def pReal = Geoindicators.TypologyClassification.identifyLczType()
-        assert pReal([
-                rsuLczIndicators : "buff_rsu_test_lcz_indics",
-                rsuAllIndicators : "buff_rsu_test_all_indics_for_lcz",
-                normalisationType: "AVG",
-                mapOfWeights     : ["sky_view_factor"             : 4,
-                                    "aspect_ratio"                : 3,
-                                    "building_surface_fraction"   : 8,
-                                    "impervious_surface_fraction" : 0,
-                                    "pervious_surface_fraction"   : 0,
-                                    "height_of_roughness_elements": 6,
-                                    "terrain_roughness_length"    : 0.5],
-                prefixName       : "test",
-                datasource       : h2GIS])
-        assert 6 == h2GIS.firstRow("SELECT LCZ_PRIMARY FROM ${pReal.results.outputTableName} WHERE ID_RSU = 13").LCZ_PRIMARY
-        assert 6 == h2GIS.firstRow("SELECT LCZ_PRIMARY FROM ${pReal.results.outputTableName} WHERE ID_RSU = 14").LCZ_PRIMARY
-        assert 4 == h2GIS.firstRow("SELECT LCZ_PRIMARY FROM ${pReal.results.outputTableName} WHERE ID_RSU = 15").LCZ_PRIMARY
-        assert 5 == h2GIS.firstRow("SELECT LCZ_SECONDARY FROM ${pReal.results.outputTableName} WHERE ID_RSU = 15").LCZ_SECONDARY
-        assert 6 == h2GIS.firstRow("SELECT LCZ_PRIMARY FROM ${pReal.results.outputTableName} WHERE ID_RSU = 16").LCZ_PRIMARY
-        assert 102 == h2GIS.firstRow("SELECT LCZ_PRIMARY FROM ${pReal.results.outputTableName} WHERE ID_RSU = 17").LCZ_PRIMARY
+        def pReal = Geoindicators.TypologyClassification.identifyLczType(h2GIS,
+                "buff_rsu_test_lcz_indics",
+                "buff_rsu_test_all_indics_for_lcz",
+                "AVG",
+                ["sky_view_factor"             : 4,
+                 "aspect_ratio"                : 3,
+                 "building_surface_fraction"   : 8,
+                 "impervious_surface_fraction" : 0,
+                 "pervious_surface_fraction"   : 0,
+                 "height_of_roughness_elements": 6,
+                 "terrain_roughness_length"    : 0.5],
+                "test")
+        assertNotNull(pReal)
+        assert 6 == h2GIS.firstRow("SELECT LCZ_PRIMARY FROM ${pReal} WHERE ID_RSU = 13").LCZ_PRIMARY
+        assert 6 == h2GIS.firstRow("SELECT LCZ_PRIMARY FROM ${pReal} WHERE ID_RSU = 14").LCZ_PRIMARY
+        assert 4 == h2GIS.firstRow("SELECT LCZ_PRIMARY FROM ${pReal} WHERE ID_RSU = 15").LCZ_PRIMARY
+        assert 5 == h2GIS.firstRow("SELECT LCZ_SECONDARY FROM ${pReal} WHERE ID_RSU = 15").LCZ_SECONDARY
+        assert 6 == h2GIS.firstRow("SELECT LCZ_PRIMARY FROM ${pReal} WHERE ID_RSU = 16").LCZ_PRIMARY
+        assert 102 == h2GIS.firstRow("SELECT LCZ_PRIMARY FROM ${pReal} WHERE ID_RSU = 17").LCZ_PRIMARY
     }
 
     @Test
     void createRandomForestClassifTest() {
+        h2GIS.executeScript(this.getClass().getResourceAsStream("data_for_tests.sql"))
         h2GIS """
                 DROP TABLE IF EXISTS tempo_rsu_for_lcz;
                 CREATE TABLE tempo_rsu_for_lcz AS 
@@ -166,9 +163,9 @@ class TypologyClassificationTests {
         def trainingURL = TypologyClassificationTests.getResource("model/rf/training_data.shp")
 
         def uuid = UUID.randomUUID().toString().replaceAll("-", "_")
-        def savePath = "target/geoclimate_rf_${uuid}.model"
+        String savePath = new File(folder, "geoclimate_rf_${uuid}.model").getAbsolutePath()
 
-        def trainingTable = h2GIS.table(h2GIS.load(trainingURL, trainingTableName, true))
+        def trainingTable = h2GIS.getTable(h2GIS.load(trainingURL, trainingTableName, true))
         assert trainingTable
 
         // Variable to model
@@ -178,26 +175,23 @@ class TypologyClassificationTests {
         def colsToRemove = ["PK2", "THE_GEOM", "PK"]
 
         // Remove unnecessary column
-        h2GIS "ALTER TABLE $trainingTableName DROP COLUMN ${colsToRemove.join(",")};"
+        h2GIS.execute("ALTER TABLE $trainingTableName DROP COLUMN ${colsToRemove.join(",")};")
 
         //Reload the table due to the schema modification
         trainingTable.reload()
 
-        def pmed = Geoindicators.TypologyClassification.createRandomForestModel()
-        assert pmed.execute([
-                trainingTableName: trainingTableName,
-                varToModel       : var2model,
-                save             : true,
-                pathAndFileName  : savePath,
-                ntrees           : 300,
-                mtry             : 7,
-                rule             : "GINI",
-                maxDepth         : 100,
-                maxNodes         : 300,
-                nodeSize         : 5,
-                subsample        : 0.25,
-                datasource       : h2GIS])
-        def model = pmed.results.RfModel
+        def model = Geoindicators.TypologyClassification.createRandomForestModel(h2GIS,
+                trainingTableName,
+                var2model, [],
+                true,
+                savePath,
+                300,
+                7,
+                "GINI",
+                100,
+                300,
+                5,
+                0.25)
         assert model
         assert model instanceof DataFrameClassifier
 
@@ -219,7 +213,19 @@ class TypologyClassificationTests {
 
 
         // Test that the model is well written in the file and can be used to recover the variable names for example
-        def xs = new XStream()
+        def xs = new XStream(new StaxDriver())
+        // clear out existing permissions and start a whitelist
+        xs.addPermission(NoTypePermission.NONE);
+        // allow some basics
+        xs.addPermission(NullPermission.NULL);
+        xs.addPermission(PrimitiveTypePermission.PRIMITIVES);
+        xs.allowTypeHierarchy(Collection.class);
+        // allow any type from the packages
+        xs.allowTypesByWildcard(new String[]{
+                TypologyClassification.class.getPackage().getName() + ".*",
+                "smile.regression.*", "smile.data.formula.*", "smile.data.type.*", "smile.data.measure.*", "smile.data.measure.*",
+                "smile.base.cart.*", "smile.classification.*", "java.lang.*", "java.util.*"
+        })
         def fileInputStream = new FileInputStream(savePath)
         assert fileInputStream
         def gzipInputStream = new GZIPInputStream(fileInputStream)
@@ -238,7 +244,7 @@ class TypologyClassificationTests {
         def namesStr = names.join(",")
         assert namesStr
 
-        def columns = trainingTable.columns
+        def columns = trainingTable.getColumnNames()
         assert columns
         columns = columns.minus(var2model)
         assert columns
@@ -278,7 +284,7 @@ class TypologyClassificationTests {
         h2GIS.load(indicatorsPath, indicatorsTable)
 
         // Replace the id_rsu (coming from a specific city) by the id (coming from the true values of LCZ)
-        def allColumns = h2GIS.getTable(indicatorsTable).columns
+        def allColumns = h2GIS.getColumnNames(indicatorsTable)
         allColumns.remove("ID_RSU")
         allColumns.remove("ID")
 
@@ -307,7 +313,7 @@ class TypologyClassificationTests {
                 CREATE TABLE $lczIndicTable AS 
                     SELECT id_rsu, the_geom, ${lczIndicNames.keySet().join(",")} FROM $indicatorsTable;
                 $queryReplaceNames
-        """
+        """.toString()
 
 
         // The classification algorithm is called
@@ -383,8 +389,8 @@ class TypologyClassificationTests {
     @Test
     void tempoCreateRandomForestClassifTest() {
         // Specify the model and training datat appropriate to the right use
-        def model_name = "URBAN_TYPOLOGY_OSM_RF_2_0"
-        def training_data_name = "TRAINING_DATA_URBAN_TYPOLOGY_OSM_RF_2_0"
+        def model_name = "UTRF_OSM_RF_2_2"
+        def training_data_name = "TRAINING_DATA_UTRF_OSM_RF_2_2"
         // Name of the variable to model
         def var2model = "I_TYPO"
         def var2ModelFinal = "I_TYPO"
@@ -412,7 +418,7 @@ class TypologyClassificationTests {
             //Reload the table due to the schema modification
             h2GIS.getTable("tempo").reload()
 
-            def columns = h2GIS.getTable("tempo").getColumns()
+            def columns = h2GIS.getColumnNames("tempo")
             columns = columns.minus(var2model)
 
             h2GIS """   DROP TABLE IF EXISTS $trainingTableName;
@@ -421,22 +427,18 @@ class TypologyClassificationTests {
                             FROM tempo"""
 
             assert h2GIS."$trainingTableName"
-            def pmed = Geoindicators.TypologyClassification.createRandomForestModel()
-            assert pmed.execute([
-                    trainingTableName: trainingTableName,
-                    varToModel       : var2ModelFinal,
-                    save             : true,
-                    pathAndFileName  : savePath,
-                    ntrees           : 500,
-                    mtry             : 15,
-                    rule             : "GINI",
-                    maxDepth         : 80,
-                    maxNodes         : 300,
-                    nodeSize         : 1,
-                    subsample        : 1.0,
-                    datasource       : h2GIS,
-                    classif          : classif])
-            def model = pmed.results.RfModel
+            def model = Geoindicators.TypologyClassification.createRandomForestModel(h2GIS,
+                    trainingTableName,
+                    var2ModelFinal, [],
+                    true,
+                    savePath,
+                    500,
+                    15,
+                    "GINI",
+                    80,
+                    300,
+                    1,
+                    1.0)
             assert model
 
             // Test that the model has been correctly calibrated (that it can be applied to the same dataset)
@@ -459,77 +461,66 @@ class TypologyClassificationTests {
     @Test
     //TODO filter  avg_height_roof=0
     void createRandomForestModelBUILDING_HEIGHT_OSM_RF() {
-        // Specify the model and training datat appropriate to the right use
-        def model_name = "BUILDING_HEIGHT_OSM_RF_2_0.model"
-        def training_data_name = "TRAINING_DATA_BUILDINGHEIGHT_OSM_RF_1_0.geojson.gz"
+        // Specify the model and training data appropriate to the right use
+        def model_name = "BUILDING_HEIGHT_OSM_RF_2_2.model"
         // Name of the variable to model
         def var2model = "HEIGHT_ROOF"
         def var2ModelFinal = "HEIGHT_ROOF"
-        // Whether the RF is a classif or a regression
-        def classif = true
 
         // Information about where to find the training dataset for the test
         def trainingTableName = "training_table"
-        String directory = "../geoclimate/models"
+        String directory = "../geoclimate/models/"
         def savePath = directory + File.separator + model_name + ".model"
 
         if (new File(directory).exists()) {
-            // Read the training data
-            h2GIS """ CALL GEOJSONREAD('${directory + File.separator + training_data_name + ".geojson.gz"}', 'tempo0')"""
+            // Read the two training data files
+            h2GIS """ CALL GEOJSONREAD('${"TRAINING_DATA_BUILDINGHEIGHT_OSM_RF_2_2_part1.geojson"}', 'tempo_a', true)"""
+            h2GIS """ CALL GEOJSONREAD('${"TRAINING_DATA_BUILDINGHEIGHT_OSM_RF_2_2_part2.geojson"}', 'tempo_b', true)"""
 
-            // Select only specific data
-            h2GIS """   DROP TABLE IF EXISTS tempo;
-                        CREATE TABLE tempo
-                            AS SELECT * 
-                            FROM tempo0
-                             """
+            h2GIS.execute('''DROP TABLE IF EXISTS tempo; CREATE TABLE tempo as select * from tempo_a union all select * from tempo_b''')
+
 
             // Remove unnecessary column
             h2GIS "ALTER TABLE tempo DROP COLUMN the_geom;"
             //Reload the table due to the schema modification
             h2GIS.getTable("tempo").reload()
 
-            def columns = h2GIS.getTable("tempo").getColumns()
+            def columns = h2GIS.getColumnNames("tempo")
             columns = columns.minus(var2model)
 
             h2GIS """   DROP TABLE IF EXISTS $trainingTableName;
                     CREATE TABLE $trainingTableName
-                            AS SELECT CAST($var2model AS INTEGER) AS $var2ModelFinal, ${columns.join(",")}
+                            AS SELECT $var2model  AS $var2ModelFinal, ${columns.join(",")}
                             FROM tempo"""
 
             //Parameters
-            def ntree = 500
-            def min_size_node = 1
-            def nb_var_tree = 9
-            def max_depth = 80
-            def max_leaf_nodes = 400
+            def ntree = 350
+            def min_size_node = 35
+            def nb_var_tree = 25
+            def max_depth = 33
+            def max_leaf_nodes = 1100
 
             assert h2GIS."$trainingTableName"
-            def pmed = Geoindicators.TypologyClassification.createRandomForestModel()
-            assert pmed.execute([
-                    trainingTableName: trainingTableName,
-                    varToModel       : var2ModelFinal,
-                    save             : true,
-                    pathAndFileName  : savePath,
-                    ntrees           : ntree,
-                    mtry             : nb_var_tree,
-                    rule             : "GINI",
-                    maxDepth         : max_depth,
-                    maxNodes         : max_leaf_nodes,
-                    nodeSize         : min_size_node,
-                    subsample        : 1.0,
-                    datasource       : h2GIS,
-                    classif          : classif])
-            def model = pmed.results.RfModel
+            def model = Geoindicators.TypologyClassification.createRandomForestModel(h2GIS,
+                    trainingTableName,
+                    var2ModelFinal, [],
+                    true,
+                    savePath,
+                    ntree,
+                    nb_var_tree,
+                    "GINI",
+                    max_depth,
+                    max_leaf_nodes,
+                    min_size_node,
+                    1.0)
             assert model
 
             // Test that the model has been correctly calibrated (that it can be applied to the same dataset)
             def df = DataFrame.of(h2GIS."$trainingTableName")
-            df = df.factorize(var2model)
             df = df.omitNullRows()
             def vector = df.apply(var2model)
-            def truth = vector.toIntArray()
-            def prediction = Validation.test(model, df)
+            def truth = vector.toDoubleArray()
+            def prediction = model.predict(df)
             def accuracy = Accuracy.of(truth, prediction)
             assertEquals 0.725, accuracy.round(3), 1.5
         } else {
@@ -540,15 +531,13 @@ class TypologyClassificationTests {
     //This test is used to create the random forest model to build the urban typology with BDTOPO V2.2
     @Disabled
     @Test
-    void createRandomForestModelURBAN_TYPOLOGY_BDTOPO_V2_RF() {
+    void createRandomForestModelUTRF_BDTOPO_V2_RF() {
         // Specify the model and training datat appropriate to the right use
-        def model_name = "URBAN_TYPOLOGY_BDTOPO_V2_RF_2_1.model"
-        def training_data_name = "TRAINING_DATA_URBAN_TYPOLOGY_BDTOPO_V2_RF_2_1.geojson.gz"
+        def model_name = "UTRF_BDTOPO_V2_RF_2_2.model"
+        def training_data_name = "TRAINING_DATA_UTRF_BDTOPO_V2_RF_2_2.geojson.gz"
         // Name of the variable to model
         def var2model = "I_TYPO"
         def var2ModelFinal = "I_TYPO"
-        // Whether the RF is a classif or a regression
-        def classif = true
 
         // Information about where to find the training dataset for the test
         def trainingTableName = "training_table"
@@ -571,7 +560,7 @@ class TypologyClassificationTests {
             //Reload the table due to the schema modification
             h2GIS.getTable("tempo").reload()
 
-            def columns = h2GIS.getTable("tempo").getColumns()
+            def columns = h2GIS.getColumnNames("tempo")
             columns = columns.minus(var2model)
 
             h2GIS """   DROP TABLE IF EXISTS $trainingTableName;
@@ -587,22 +576,18 @@ class TypologyClassificationTests {
             def max_leaf_nodes = 400
 
             assert h2GIS."$trainingTableName"
-            def pmed = Geoindicators.TypologyClassification.createRandomForestModel()
-            assert pmed.execute([
-                    trainingTableName: trainingTableName,
-                    varToModel       : var2ModelFinal,
-                    save             : true,
-                    pathAndFileName  : savePath,
-                    ntrees           : ntree,
-                    mtry             : nb_var_tree,
-                    rule             : "GINI",
-                    maxDepth         : max_depth,
-                    maxNodes         : max_leaf_nodes,
-                    nodeSize         : min_size_node,
-                    subsample        : 1.0,
-                    datasource       : h2GIS,
-                    classif          : classif])
-            def model = pmed.results.RfModel
+            def model = Geoindicators.TypologyClassification.createRandomForestModel(h2GIS,
+                    trainingTableName,
+                    var2ModelFinal, [],
+                    true, savePath,
+                    ntree,
+                    nb_var_tree,
+                    "GINI",
+                    max_depth,
+                    max_leaf_nodes,
+                    min_size_node,
+                    1.0,
+                    true)
             assert model
 
             // Test that the model has been correctly calibrated (that it can be applied to the same dataset)
@@ -622,19 +607,18 @@ class TypologyClassificationTests {
     //This test is used to create the random forest model to build the urban typology with OSM
     @Disabled
     @Test
-    void createRandomForestModelURBAN_TYPOLOGY_OSM_RF() {
+    void createRandomForestModelUTRF_OSM_RF() {
         // Specify the model and training datat appropriate to the right use
-        def model_name = "URBAN_TYPOLOGY_OSM_RF_2_1.model"
-        def training_data_name = "TRAINING_DATA_URBAN_TYPOLOGY_OSM_RF_2_1.geojson.gz"
+        def model_name = "UTRF_OSM_RF_2_2.model"
+        def training_data_name = "TRAINING_DATA_UTRF_OSM_RF_2_2.geojson.gz"
         // Name of the variable to model
         def var2model = "I_TYPO"
         def var2ModelFinal = "I_TYPO"
-        // Whether the RF is a classif or a regression
-        def classif = true
 
         // Information about where to find the training dataset for the test
         def trainingTableName = "training_table"
         String directory = "../geoclimate/models/"
+
         def savePath = directory + File.separator + model_name
 
         if (new File(directory).exists()) {
@@ -653,7 +637,7 @@ class TypologyClassificationTests {
             //Reload the table due to the schema modification
             h2GIS.getTable("tempo").reload()
 
-            def columns = h2GIS.getTable("tempo").getColumns()
+            def columns = h2GIS.getColumnNames("tempo")
             columns = columns.minus(var2model)
 
             h2GIS """   DROP TABLE IF EXISTS $trainingTableName;
@@ -669,22 +653,18 @@ class TypologyClassificationTests {
             def max_leaf_nodes = 300
 
             assert h2GIS."$trainingTableName"
-            def pmed = Geoindicators.TypologyClassification.createRandomForestModel()
-            assert pmed.execute([
-                    trainingTableName: trainingTableName,
-                    varToModel       : var2ModelFinal,
-                    save             : true,
-                    pathAndFileName  : savePath,
-                    ntrees           : ntree,
-                    mtry             : nb_var_tree,
-                    rule             : "GINI",
-                    maxDepth         : max_depth,
-                    maxNodes         : max_leaf_nodes,
-                    nodeSize         : min_size_node,
-                    subsample        : 1.0,
-                    datasource       : h2GIS,
-                    classif          : classif])
-            def model = pmed.results.RfModel
+            def model = Geoindicators.TypologyClassification.createRandomForestModel(h2GIS,
+                    trainingTableName,
+                    var2ModelFinal, [],
+                    true,
+                    savePath,
+                    ntree,
+                    nb_var_tree,
+                    "GINI",
+                    max_depth,
+                    max_leaf_nodes,
+                    min_size_node,
+                    1.0)
             assert model
 
             // Test that the model has been correctly calibrated (that it can be applied to the same dataset)

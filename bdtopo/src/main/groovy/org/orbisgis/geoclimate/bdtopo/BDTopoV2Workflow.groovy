@@ -52,7 +52,7 @@ Integer loadDataFromPostGIS(Object input_database_properties, Object code, Objec
         DataSource ds = dataSourceFactory.createDataSource(props)
         sourceConnection = ds.getConnection()
     } catch (SQLException e) {
-        throw new SQLException("Cannot connect to the database to import the data ")
+        throw new Exception("Cannot connect to the database to import the data ", e)
     }
     if (sourceConnection == null) {
         throw new Exception("Cannot connect to the database to import the data ")
@@ -127,7 +127,7 @@ Integer loadDataFromPostGIS(Object input_database_properties, Object code, Objec
         if (inputTables.route) {
             //Extract route
             def inputTableName = """(SELECT ID, st_setsrid(the_geom, $commune_srid) as the_geom, NATURE, LARGEUR, POS_SOL, 
-            FRANCHISST, SENS, IMPORTANCE, CL_ADMIN FROM ${inputTables.route}  WHERE 
+            FRANCHISST, SENS, IMPORTANCE, CL_ADMIN, NB_VOIES FROM ${inputTables.route}  WHERE 
             st_setsrid(the_geom, $commune_srid) && 'SRID=$commune_srid;$geomToExtract'::GEOMETRY 
             AND ST_INTERSECTS(st_setsrid(the_geom, $commune_srid), 'SRID=$commune_srid;$geomToExtract'::GEOMETRY)
             AND NATURE NOT IN ('Bac auto', 'Bac piéton', 'Escalier'))""".toString()
@@ -214,6 +214,7 @@ Integer loadDataFromPostGIS(Object input_database_properties, Object code, Objec
     } else {
         throw new Exception("Cannot find any commune with the insee code : $code".toString())
     }
+    return false
 }
 
 @Override
@@ -248,6 +249,7 @@ Map formatLayers(JdbcDataSource datasource, Map layers, float distance, float hL
         throw new Exception("Cannot prepare the BDTopo data.")
     }
     def zoneTable = importPreprocess.zone
+    def zone_extended  = importPreprocess.zone_extended
     def urbanAreas = importPreprocess.urban_areas
 
     //Format impervious
@@ -255,37 +257,38 @@ Map formatLayers(JdbcDataSource datasource, Map layers, float distance, float hL
             importPreprocess.impervious)
 
     //Format building
-    def finalBuildings = BDTopo.InputDataFormatting.formatBuildingLayer(datasource,
-            importPreprocess.building, zoneTable,
+    Map formatBuilding = BDTopo.InputDataFormatting.formatBuildingLayer(datasource,
+            importPreprocess.building, zone_extended,
             urbanAreas, hLevMin)
+
+    def finalBuildings = formatBuilding.building
+    def building_updated = formatBuilding.building_updated
 
     //Format roads
     def finalRoads = BDTopo.InputDataFormatting.formatRoadLayer(datasource,
             importPreprocess.road,
-            zoneTable)
+            zone_extended)
 
     //Format rails
     def finalRails = BDTopo.InputDataFormatting.formatRailsLayer(datasource,
             importPreprocess.rail,
-            zoneTable)
+            zone_extended)
 
     //Format vegetation
     def finalVeget = BDTopo.InputDataFormatting.formatVegetationLayer(datasource,
             importPreprocess.vegetation,
-            zoneTable)
+            zone_extended)
 
     //Format water
     def finalHydro = BDTopo.InputDataFormatting.formatHydroLayer(datasource,
             importPreprocess.water,
-            zoneTable)
-
-    debug "End of the BDTopo extract transform process."
+            zone_extended)
 
     info "All layers have been formatted"
 
     return ["building"  : finalBuildings, "road": finalRoads, "rail": finalRails, "water": finalHydro,
-            "vegetation": finalVeget, "impervious": finalImpervious, "urban_areas": urbanAreas, "zone": zoneTable]
-
+            "vegetation": finalVeget, "impervious": finalImpervious, "urban_areas": urbanAreas, "zone": zoneTable,
+            "zone_extended":zone_extended, "building_updated":building_updated]
 }
 
 @Override
@@ -352,7 +355,7 @@ def filterLinkedShapeFiles(def location, float distance, LinkedHashMap inputTabl
             debug "Loading in the H2GIS database $outputTableName"
             h2gis_datasource.execute("""DROP TABLE IF EXISTS $outputTableName ; 
             CREATE TABLE $outputTableName as SELECT ID, $formatting_geom, NATURE, LARGEUR, POS_SOL, FRANCHISST, SENS,
-            IMPORTANCE, CL_ADMIN FROM ${inputTables.route}  
+            IMPORTANCE, CL_ADMIN, NB_VOIES FROM ${inputTables.route}  
             WHERE the_geom && 'SRID=$sourceSRID;$geomToExtract'::GEOMETRY 
             AND ST_INTERSECTS(the_geom, 'SRID=$sourceSRID;$geomToExtract'::GEOMETRY)
             AND NATURE NOT IN ('Bac auto', 'Bac piéton', 'Escalier')""".toString())

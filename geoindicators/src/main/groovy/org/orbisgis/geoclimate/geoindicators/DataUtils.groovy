@@ -21,6 +21,7 @@ package org.orbisgis.geoclimate.geoindicators
 
 import groovy.json.JsonSlurper
 import groovy.transform.BaseScript
+import org.orbisgis.data.H2GIS
 import org.orbisgis.data.jdbc.JdbcDataSource
 import org.orbisgis.geoclimate.Geoindicators
 
@@ -81,7 +82,7 @@ String joinTables(JdbcDataSource datasource, Map inputTableNamesWithId, String o
         ${indexes.toString()}
         CREATE TABLE $outputTableName AS SELECT $columnsAsString $leftQuery""")
         return outputTableName
-    } catch (java.sql.SQLException e) {
+    } catch (SQLException e) {
         throw new SQLException("Cannot join the tables", e)
     }
 }

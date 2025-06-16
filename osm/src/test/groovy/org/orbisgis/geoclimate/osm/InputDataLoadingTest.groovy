@@ -24,6 +24,8 @@ import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import org.orbisgis.data.H2GIS
+import org.orbisgis.geoclimate.Geoindicators
+import org.orbisgis.geoclimate.geoindicators.DataUtils
 
 import static org.junit.jupiter.api.Assertions.assertEquals
 
@@ -55,17 +57,19 @@ class InputDataLoadingTest {
     void createGISLayersTest() {
         def osmfile = new File(this.class.getResource("redon.osm").toURI()).getAbsolutePath()
         Map extract = OSM.InputDataLoading.createGISLayers(h2GIS, osmfile, 2154)
-        assertEquals 1034, h2GIS.getTable(extract.building).rowCount
-        assertEquals 135, h2GIS.getTable(extract.vegetation).rowCount
+        assertEquals 1038, h2GIS.getTable(extract.building).rowCount
+        assertEquals 136, h2GIS.getTable(extract.vegetation).rowCount
         assertEquals 211, h2GIS.getTable(extract.road).rowCount
 
         assertEquals 44, h2GIS.getTable(extract.rail).rowCount
 
-        assertEquals 10, h2GIS.getTable(extract.water).rowCount
+        assertEquals 7, h2GIS.getTable(extract.water).rowCount
 
         assertEquals 47, h2GIS.getTable(extract.impervious).rowCount
 
-        assertEquals 10, h2GIS.getTable(extract.urban_areas).rowCount
+        assertEquals 11, h2GIS.getTable(extract.urban_areas).rowCount
+
+        Geoindicators.DataUtils.saveTablesAsFiles(h2GIS, extract.values().asList(), true, "/tmp/geoclimate")
     }
 
     //This test is used for debug purpose

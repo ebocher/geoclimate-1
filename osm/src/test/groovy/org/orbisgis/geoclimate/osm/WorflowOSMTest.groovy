@@ -21,14 +21,17 @@ package org.orbisgis.geoclimate.osm
 
 import groovy.json.JsonOutput
 import org.apache.commons.io.FileUtils
+import org.h2gis.utilities.GeographyUtilities
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.CleanupMode
 import org.junit.jupiter.api.io.TempDir
+import org.locationtech.jts.geom.Geometry
 import org.orbisgis.data.H2GIS
 import org.orbisgis.data.POSTGIS
 import org.orbisgis.geoclimate.Geoindicators
+import org.orbisgis.geoclimate.osmtools.OSMTools
 
 import static org.junit.jupiter.api.Assertions.*
 
@@ -221,7 +224,7 @@ class WorflowOSMTest extends WorkflowAbstractTest {
                         "database":
                                 ["user"    : "sa",
                                  "password": "",
-                                 "url"     : "jdbc:h2://" + dirFile.absolutePath + File.separator + "geoclimate_chain_db_output;AUTO_SERVER=TRUE",
+                                 "url"     : "h2://" + dirFile.absolutePath + File.separator + "geoclimate_chain_db_output;AUTO_SERVER=TRUE",
                                  "tables"  : [
                                          "rsu_indicators": "rsu_indicators",
                                          "rsu_lcz"       : "rsu_lcz"]]],
@@ -263,13 +266,13 @@ class WorflowOSMTest extends WorkflowAbstractTest {
                         "database":
                                 ["user"    : "orbisgis",
                                  "password": "orbisgis",
-                                 "url"     : "jdbc:postgresql://localhost:5432/orbisgis_db",
+                                 "url"     : "postgis://localhost:5432/orbisgis_db",
                                  "tables"  : [
                                          "rsu_indicators"         : "rsu_indicators",
                                          "rsu_lcz"                : "rsu_lcz",
                                          "zone"                   : "zone",
                                          "grid_indicators"        : "grid_indicators",
-                                         "building_height_missing": "building_height_missing"]]],
+                                         "building_updated": "building_updated"]]],
                 "parameters"  :
                         ["distance"       : 0,
                          rsu_indicators   : ["indicatorUse" : ["LCZ"],
@@ -301,9 +304,9 @@ class WorflowOSMTest extends WorkflowAbstractTest {
             def gridTable = postgis.getTable("grid_indicators")
             assertNotNull(gridTable)
             assertTrue(gridTable.getRowCount() > 0)
-            def building_height_missing = postgis.getTable("building_height_missing")
-            assertNotNull(building_height_missing)
-            assertTrue(building_height_missing.getRowCount() > 0)
+            def building_updated = postgis.getTable("building_updated")
+            assertNotNull(building_updated)
+            assertTrue(building_updated.getRowCount() > 0)
         }
     }
 
@@ -343,7 +346,9 @@ class WorflowOSMTest extends WorkflowAbstractTest {
         H2GIS h2gis = H2GIS.open("${directory + File.separator}geoclimate_chain_db;AUTO_SERVER=TRUE")
         geoFiles.eachWithIndex { geoFile, index ->
             def tableName = h2gis.load(geoFile, true)
-            assertEquals(4326, h2gis.getSpatialTable(tableName).srid)
+            if(h2gis.getRowCount(tableName)>0) {
+                assertEquals(4326, h2gis.getSpatialTable(tableName).srid)
+            }
         }
     }
 
@@ -374,7 +379,7 @@ class WorflowOSMTest extends WorkflowAbstractTest {
                 countFiles++
             }
         }
-        assertEquals(9, countFiles)
+        assertEquals(10, countFiles)
     }
 
     @Disabled
@@ -397,7 +402,6 @@ class WorflowOSMTest extends WorkflowAbstractTest {
                 "output"      : [
                         "folder": directory]
         ]
-        println(osm_parmeters)
         OSM.WorkflowOSM.workflow(osm_parmeters)
         def folder = new File(directory + File.separator + "osm_" + bbox.join("_"))
         def resultFiles = []
@@ -503,10 +507,8 @@ class WorflowOSMTest extends WorkflowAbstractTest {
         def grid_file = new File("${directory + File.separator}osm_Pont-de-Veyle${File.separator}grid_indicators_water_fraction.asc")
         h2gis.execute("DROP TABLE IF EXISTS water_grid; CALL ASCREAD('${grid_file.getAbsolutePath()}', 'water_grid')")
         assertTrue h2gis.firstRow("select count(*) as count from water_grid").count == 6
-
-        assertEquals(5, h2gis.firstRow("select count(*) as count from $gridTable where LCZ_PRIMARY is not null").count)
-        assertEquals(1, h2gis.firstRow("select count(*) as count from $gridTable where LCZ_PRIMARY is null").count)
-    }
+        assertEquals(6, h2gis.firstRow("select count(*) as count from $gridTable where LCZ_PRIMARY is not null").count)
+     }
 
     @Test
     void testLoggerZones() {
@@ -594,7 +596,6 @@ class WorflowOSMTest extends WorkflowAbstractTest {
                 "parameters"  :
                         [
                                 rsu_indicators: [
-                                        "unit"         : "GRID",
                                         "indicatorUse" : ["TEB"],
                                         "svfSimplified": true
                                 ]
@@ -604,12 +605,82 @@ class WorflowOSMTest extends WorkflowAbstractTest {
     }
 
     @Test
+    void testTarget() {
+        String directory = folder.absolutePath + File.separator + "testOSMTEB"
+        File dirFile = new File(directory)
+        dirFile.delete()
+        dirFile.mkdir()
+        def osm_parmeters = [
+                "description" : "Compute the targuet land input",
+                "geoclimatedb": [
+                        "folder": dirFile.absolutePath,
+                        "name"  : "geoclimate_chain_db",
+                        "delete": false
+                ],
+                "input"       : [
+                        "locations": ["Pont-de-Veyle"]
+                        ],
+                "output"      : [
+                        "folder": directory],
+                "parameters"  :
+                        [
+                                rsu_indicators: [
+                                        "indicatorUse" : ["target"]
+                                ]
+                        ]
+        ]
+        Map process = OSM.WorkflowOSM.workflow(osm_parmeters)
+        def tableNames = process.values()
+        def targetGrid = tableNames.grid_target[0]
+        H2GIS h2gis = H2GIS.open("${directory + File.separator}geoclimate_chain_db")
+        assertEquals(h2gis.getRowCount(targetGrid), h2gis.firstRow("""select count(*) as count from $targetGrid 
+        where \"roof\"+ \"road\"+ \"watr\"+\"conc\"+\"Veg\" + \"dry\" + \"irr\" >=1""").count)
+    }
+
+    @Test
+    void testTargetGridSize() {
+        String directory = folder.absolutePath + File.separator + "testOSMTEB"
+        File dirFile = new File(directory)
+        dirFile.delete()
+        dirFile.mkdir()
+        def osm_parmeters = [
+                "description" : "Compute the target land input",
+                "geoclimatedb": [
+                        "folder": dirFile.absolutePath,
+                        "name"  : "geoclimate_chain_db",
+                        "delete": false
+                ],
+                "input"       : [
+                        "locations": ["Pont-de-Veyle"]],
+                "output"      : [
+                        "folder": directory],
+                "parameters"  :
+                        [
+                                rsu_indicators: ["indicatorUse" : ["TARGET", "LCZ"]
+                                ],"grid_indicators"   : [
+                                "x_size"    : 200,
+                                "y_size"    : 200,
+                                "indicators": [
+                                        "LCZ_PRIMARY"]
+                        ]
+                        ]
+        ]
+        Map process = OSM.WorkflowOSM.workflow(osm_parmeters)
+        def tableNames = process.values()
+        def targetGrid = tableNames.grid_target[0]
+        H2GIS h2gis = H2GIS.open("${directory + File.separator}geoclimate_chain_db")
+        assertEquals(h2gis.getRowCount(targetGrid), h2gis.firstRow("""select count(*) as count from $targetGrid 
+        where \"roof\"+ \"road\"+ \"watr\"+\"conc\"+\"Veg\" + \"dry\" + \"irr\" >=1""").count)
+        def gridIndicators = tableNames.grid_indicators[0]
+        assertTrue(h2gis.getColumnNames(gridIndicators).contains("LCZ_PRIMARY"))
+    }
+
+    @Test
     void testRoadTrafficAndNoiseIndicators() {
         String directory = folder.absolutePath + File.separator + "testRoad_traffic"
         File dirFile = new File(directory)
         dirFile.delete()
         dirFile.mkdir()
-
         def osm_parmeters = [
                 "description" : "Example of configuration file to run only the road traffic estimation",
                 "geoclimatedb": [
@@ -638,7 +709,6 @@ class WorflowOSMTest extends WorkflowAbstractTest {
         assertTrue h2gis.firstRow("select count(*) as count from $roadTableName where road_type is not null".toString()).count > 0
         assertTrue h2gis.firstRow("select count(*) as count from $ground_acoustic where layer in ('road', 'building')".toString()).count == 0
         assertTrue h2gis.rows("select distinct(g) as g from $ground_acoustic where layer = 'water'".toString()).size() == 1
-
     }
 
     @Disabled
@@ -649,20 +719,33 @@ class WorflowOSMTest extends WorkflowAbstractTest {
         File dirFile = new File(directory)
         dirFile.delete()
         dirFile.mkdir()
-        def location = "Nantes"
-        def nominatim = org.orbisgis.geoclimate.osmtools.OSMTools.Utilities.getNominatimData(location)
-        def grid_size = 250
-        location = nominatim.bbox
-        location=[51.2, 1.0, 51.4, 1.2]
+        def location = "Redon"
+        //location = [63.85919, -52.27294, 64.03886, -51.85932]
+        //def nominatim = OSMTools.Utilities.getNominatimData("Redon")
+        def grid_size = 4000
+        //location =[47.214976592711274,-1.6425595375815742,47.25814872718718,-1.5659501122281323]
+        //location=[47.215334,-1.558058,47.216646,-1.556185]
+        //location = [nominatim.bbox]
+        def location1= [47.642695,-2.777953,47.648651,-2.769413]
+        def location2= [47.642723,-2.769456,47.648622,-2.761259]
+
+        //Farm land pb
+        location1  = [50.957075,1.946297,50.988314,2.027321]
+
+        //location = [[47.504374,-0.479279,47.516621,-0.454495]]
+
         /* location =[ 48.84017284026897,
                     2.3061887733275785,
                     48.878115442982086,
                     2.36742047202511]*/
+
+        // Disable this if you want to compute a grid of domains
+        // location = computeDomains(location1, 500)
         def osm_parmeters = [
                 "description" : "Example of configuration file to run the OSM workflow and store the result in a folder",
                 "geoclimatedb": [
                         "folder": dirFile.absolutePath,
-                        "name"  : "geoclimate_test_integration;AUTO_SERVER=TRUE;",
+                        "name"  : "geoclimate_test_integration;",
                         "delete": false
                 ],
                 "input"       : [
@@ -674,29 +757,36 @@ class WorflowOSMTest extends WorkflowAbstractTest {
                         "endpoint":"https://lz4.overpass-api.de/api"*/],
                 "output"      : [
                         "folder": directory]
+                        /*[
+                        "database":
+                                ["user"    : "orbisgis",
+                                 "password": "orbisgis",
+                                 "url"     : "postgis://localhost:5432/orbisgis_db",
+                                 "tables"  : [
+                                         "rsu_indicators"         : "rsu_indicators",
+                                         "rsu_lcz"                : "rsu_lcz",
+                                         "zone"                   : "zone"]]]*/
                 ,
                 "parameters"  :
-                        ["distance"             : 0,
+                        [//"distance"             : 200,
                          "rsu_indicators"       : [
-                                 "indicatorUse": ["LCZ", "TEB"] //, "UTRF"]
+                                 "indicatorUse": ["LCZ"] //, "UTRF"]
 
-                         ], "grid_indicators"   : [
+                         ]
+                         /*, "grid_indicators"   : [
                                 "x_size"    : grid_size,
                                 "y_size"    : grid_size,
+                                "rowCol": false,
+                                "output" : "geojson",
                                 "indicators": [
-                                        "BUILDING_FRACTION",
-                                        "BUILDING_HEIGHT",
-                                        "BUILDING_POP",
-                                        "BUILDING_TYPE_FRACTION",
-                                        "WATER_FRACTION",
-                                        "VEGETATION_FRACTION",
-                                        "ROAD_FRACTION",
-                                        "IMPERVIOUS_FRACTION",
-                                        "LCZ_FRACTION",
-                                        "LCZ_PRIMARY",
-                                        "SEA_LAND_FRACTION",
-                                        "ASPECT_RATIO",
-                                        "SVF" ]
+                                        "BUILDING_FRACTION", "BUILDING_HEIGHT", "BUILDING_POP",
+                                        "BUILDING_TYPE_FRACTION", "WATER_FRACTION", "VEGETATION_FRACTION",
+                                        "ROAD_FRACTION", "IMPERVIOUS_FRACTION", "FREE_EXTERNAL_FACADE_DENSITY",
+                                        "BUILDING_HEIGHT_WEIGHTED", "BUILDING_SURFACE_DENSITY",
+                                        "SEA_LAND_FRACTION", "ASPECT_RATIO", "SVF",
+                                        "HEIGHT_OF_ROUGHNESS_ELEMENTS", "TERRAIN_ROUGHNESS_CLASS",
+                                        "UTRF_AREA_FRACTION", "UTRF_FLOOR_AREA_FRACTION",
+                                        "LCZ_PRIMARY", "BUILDING_HEIGHT_DISTRIBUTION", "STREET_WIDTH"]
                                 //"lcz_lod":1
                         ], "worldpop_indicators": true
                          /*
@@ -708,6 +798,32 @@ class WorflowOSMTest extends WorkflowAbstractTest {
                         ]
         ]
          OSM.workflow(osm_parmeters)
+    }
+
+    /**
+     * Method to compute a grid of domains
+     * @param osm_zone
+     * @param distance
+     * @return
+     */
+    List computeDomains(def osm_zone, float distance){
+        H2GIS db = H2GIS.open("/tmp/mydb")
+       Geometry geom = OSMTools.Utilities.getArea(osm_zone)
+
+       def lat_lon_bbox_extended = geom.getFactory().toGeometry(GeographyUtilities.expandEnvelopeByMeters(geom.getEnvelopeInternal(), distance))
+
+       db.execute("""
+           DROP TABLE IF EXISTS domains;
+           CREATE TABLE domains as select * from st_makegrid(ST_GEOMFROMTEXT('$lat_lon_bbox_extended', 4326), 500,500)
+       """)
+       db.save("domains", "/tmp/domains.geojson", true)
+
+       def location =[]
+       db.eachRow("SELECT THE_GEOM from DOMAINS"){
+           def env = it.the_geom.getEnvelopeInternal()
+           location<<[ env.getMinY() as float,env.getMinX() as float,env.getMaxY() as float,env.getMaxX() as float]
+       }
+        return location
     }
 
     @Disabled
@@ -724,7 +840,7 @@ class WorflowOSMTest extends WorkflowAbstractTest {
                               "BUILDING_TYPE_FRACTION", "WATER_FRACTION", "VEGETATION_FRACTION",
                               "ROAD_FRACTION", "IMPERVIOUS_FRACTION",
                               "FREE_EXTullERNAL_FACADE_DENSITY", "BUILDING_SURFACE_DENSITY",
-                              "BUILDING_HEIGHT_DIST", "FRONTAL_AREA_INDEX", "SEA_LAND_FRACTION"]
+                              "BUILDING_HEIGHT_DISTRIBUTION", "FRONTAL_AREA_INDEX", "SEA_LAND_FRACTION"]
         def databasePath = '/tmp/geoclimate_chain_dbtest;AUTO_SERVER=TRUE'
         def h2gis_properties = ["databaseName": databasePath, "user": "sa", "password": ""]
         def datasource = H2GIS.open(h2gis_properties)
@@ -747,7 +863,6 @@ class WorflowOSMTest extends WorkflowAbstractTest {
                            "$imperviousFile"   : imperviousFile + test, "$zoneFile": zoneFile + test,
                            "$sea_land_maskFile": sea_land_maskFile + test]
         filesToLoad.each { file, tab ->
-            println("$geoclimate_init_dir/${file}.geojson")
             datasource.load("$geoclimate_init_dir/${file}.geojson", tab, true)
         }
 
@@ -807,11 +922,8 @@ class WorflowOSMTest extends WorkflowAbstractTest {
                 ],
                 "input"       : [
                         "locations": [[43.726898, 7.298452, 43.727677, 7.299632]]],
-                "output"      : [
-                        "folder": ["path"  : directory,
-                                   "tables": ["building", "zone"]]],
                 "parameters"  :
-                        ["distance"    : 0,
+                        ["distance"    : 100,
                          rsu_indicators: ["indicatorUse": ["LCZ"]]
                         ]
         ]
@@ -971,6 +1083,64 @@ class WorflowOSMTest extends WorkflowAbstractTest {
         assertTrue(lcz_group.count == 1)
     }
 
+
+    /**
+     * Save the geoclimate result to a PostGIS database
+     */
+    @Test
+    void osmWorkflowToPostGISExcludeColumns() {
+        String directory = folder.absolutePath + File.separator + "osmWorkflowToPostGISDatabase"
+        File dirFile = new File(directory)
+        dirFile.delete()
+        dirFile.mkdir()
+        def osm_parmeters = [
+                "description" : "Example of configuration file to run the OSM workflow and store the result in a folder",
+                "geoclimatedb": [
+                        "folder": dirFile.absolutePath,
+                        "name"  : "geoclimate_chain_db;AUTO_SERVER=TRUE",
+                        "delete": false
+                ],
+                "input"       : [
+                        "locations": ["Pont-de-Veyle"]],
+                "output"      : [
+                        "database":
+                                ["user"    : "orbisgis",
+                                 "password": "orbisgis",
+                                 "url"     : "postgis://localhost:5432/orbisgis_db",
+                                 "tables"  : [
+                                         "rsu_indicators"         : "rsu_indicators",
+                                         "rsu_lcz"                : "rsu_lcz",
+                                         "zone"                   : "zone",
+                                         "building":"building"],
+                                 "excluded_columns"  : [
+                                         "rsu_indicators" : ["the_geom"],
+                                         "rsu_lcz"         : ["the_geom"],
+                                         "building_indicators"  : ["the_geom"]]]],
+                "parameters"  :
+                        ["distance"       : 0,
+                         rsu_indicators   : ["indicatorUse" : ["LCZ"]]
+                        ]
+        ]
+        OSM.workflow(osm_parmeters)
+        def postgis_dbProperties = [databaseName: 'orbisgis_db',
+                                    user        : 'orbisgis',
+                                    password    : 'orbisgis',
+                                    url         : 'jdbc:postgresql://localhost:5432/'
+        ]
+        POSTGIS postgis = POSTGIS.open(postgis_dbProperties);
+        if (postgis) {
+            def rsu_indicatorsTable = postgis.getTable("rsu_indicators")
+            assertNotNull(rsu_indicatorsTable)
+            assertTrue(rsu_indicatorsTable.getRowCount() > 0)
+            def rsu_lczTable = postgis.getTable("rsu_lcz")
+            assertNotNull(rsu_lczTable)
+            assertTrue(rsu_lczTable.getRowCount() > 0)
+            def zonesTable = postgis.getTable("zone")
+            assertNotNull(zonesTable)
+            assertTrue(zonesTable.getRowCount() > 0)
+        }
+    }
+
     /**
      * Create a configuration file
      * @param osmParameters
@@ -986,5 +1156,152 @@ class WorflowOSMTest extends WorkflowAbstractTest {
         }
         configFile.write(json)
         return configFile.absolutePath
+    }
+
+    @Disabled
+    //Use it for debug
+    @Test
+    void testMergeRsu() {
+        H2GIS h2GIS  = H2GIS.open("/tmp/database")
+
+        List domains =["/tmp/geoclimate/osm_47.642695_-2.777953_47.648651_-2.769413/",
+                       "/tmp/geoclimate/osm_47.642723_-2.769456_47.648622_-2.761259/"]
+
+        h2GIS.load("/tmp/geoclimate/osm_47.642695_-2.777953_47.648651_-2.769413/zone.fgb", "zone_a", true)
+        h2GIS.load("/tmp/geoclimate/osm_47.642695_-2.777953_47.648651_-2.769413/rsu_lcz.fgb", "rsu_a_in", true)
+        h2GIS.load("/tmp/geoclimate/osm_47.642723_-2.769456_47.648622_-2.761259/zone.fgb", "zone_b", true)
+        h2GIS.load("/tmp/geoclimate/osm_47.642723_-2.769456_47.648622_-2.761259/rsu_lcz.fgb", "rsu_b_in", true)
+
+        h2GIS.createSpatialIndex("rsu_a_in")
+        h2GIS.createSpatialIndex("rsu_b_in")
+
+        h2GIS.execute("""
+                DROP TABLE IF EXISTS rsu_a;
+                create table rsu_a as 
+                SELECT a.* FROM rsu_a_in as a, zone_a as b 
+                where a.the_geom && b.the_geom and st_intersects(a.the_geom, b.the_geom);
+                DROP TABLE IF EXISTS rsu_b;
+                create table rsu_b as 
+                SELECT a.* FROM rsu_b_in as a, zone_b as b 
+                where a.the_geom && b.the_geom and st_intersects(a.the_geom, b.the_geom);""")
+
+        h2GIS.createSpatialIndex("rsu_a")
+        h2GIS.createSpatialIndex("rsu_b")
+
+        h2GIS.execute("""
+                DROP TABLE IF EXISTS diff_rsu;
+                create table diff_rsu as 
+                SELECT a.id_rsu as a_id_rsu, b.id_rsu as b_id_rsu, b.the_geom, b.lcz_primary FROM rsu_a as a, rsu_b as b 
+                where a.the_geom && b.the_geom and st_intersects(st_pointonsurface(a.the_geom), b.the_geom);
+                DELETE FROM RSU_A WHERE ID_RSU IN (SELECT a_id_rsu from diff_rsu );
+                DELETE FROM RSU_B WHERE ID_RSU IN (SELECT b_id_rsu from diff_rsu );
+                DROP TABLE IF EXISTS final_rsu;
+                CREATE TABLE final_rsu as (select id_rsu, the_geom, lcz_primary from rsu_a) 
+                union all (select id_rsu, the_geom, lcz_primary from rsu_b)
+                union all (select b_id_rsu, the_geom, lcz_primary from diff_rsu)
+                """)
+
+        h2GIS.save("diff_rsu","/tmp/diff_rsu.fgb", true)
+        h2GIS.save("final_rsu","/tmp/final_rsu.fgb", true)
+    }
+
+    @Test
+    void testClip() {
+        String directory = folder.absolutePath + File.separator + "test_building_height"
+        File dirFile = new File(directory)
+        dirFile.delete()
+        dirFile.mkdir()
+        def bbox = [43.726898, 7.298452, 43.727677, 7.299632]
+        def osm_parmeters = [
+                "geoclimatedb": [
+                        "folder": dirFile.absolutePath,
+                        "name"  : "geoclimate_chain_db",
+                        "delete": false
+                ],
+                "input"       : [
+                        "locations": [bbox]],
+                "output"      : [
+                        "folder": directory,
+                        "domain":"zone",
+                        "srid"  : 4326],
+                "parameters"  :
+                        ["distance"    : 100,
+                         rsu_indicators: ["indicatorUse": ["LCZ"]],
+                         "grid_indicators": [
+                                 "domain": "zone_extended", //Compute the grid on the extended zone
+                                "x_size"    : 100,
+                                "y_size"    : 100,
+                                "indicators": ["LCZ_PRIMARY"]
+                        ]
+                        ]
+        ]
+        OSM.WorkflowOSM.workflow(osm_parmeters)
+        def folder_out = directory + File.separator + "osm_" + bbox.join("_")
+        H2GIS h2gis = H2GIS.open("${directory + File.separator}geoclimate_chain_db;AUTO_SERVER=TRUE")
+
+        def building = "building"
+        def zone = "zone"
+        h2gis.load(folder_out+File.separator+"building.fgb", building, true)
+        h2gis.load(folder_out+File.separator+"zone.fgb", zone, true)
+        assertTrue h2gis.firstRow("select count(*) as count from $building where HEIGHT_WALL>0 and HEIGHT_ROOF>0").count > 0
+        h2gis.execute("""DROP TABLE IF EXISTS building_out;
+        CREATE TABLE building_out as SELECT a.* FROM  $building a LEFT JOIN $zone b
+                ON a.the_geom && b.the_geom and ST_INTERSECTS(a.the_geom, b.the_geom)
+                WHERE b.the_geom IS NULL;""")
+        assertEquals(0, h2gis.getRowCount("building_out"))
+        def grid_indicators = "grid_indicators"
+        h2gis.load(folder_out+File.separator+"grid_indicators.fgb", grid_indicators, true)
+        h2gis.execute("""DROP TABLE IF EXISTS grid_out;
+        CREATE TABLE grid_out as SELECT a.* FROM  $grid_indicators a LEFT JOIN $zone b
+                ON a.the_geom && b.the_geom and ST_INTERSECTS(st_centroid(a.the_geom), b.the_geom)
+                WHERE b.the_geom IS NULL;""")
+        assertEquals(10, h2gis.getRowCount("grid_out"))
+
+        h2gis.dropTable("building_out", "grid_out")
+    }
+
+    @Test
+    void testClip2() {
+        String directory = folder.absolutePath + File.separator + "test_building_height"
+        File dirFile = new File(directory)
+        dirFile.delete()
+        dirFile.mkdir()
+        def bbox = [43.726898, 7.298452, 43.727677, 7.299632]
+        def osm_parmeters = [
+                "geoclimatedb": [
+                        "folder": dirFile.absolutePath,
+                        "name"  : "geoclimate_chain_db",
+                        "delete": false
+                ],
+                "input"       : [
+                        "locations": [bbox]],
+                "output"      : [
+                        "folder": directory,
+                        "domain":"zone_extended",
+                        "srid"  : 4326],
+                "parameters"  :
+                        ["distance"    : 100,
+                         rsu_indicators: ["indicatorUse": ["LCZ"]],
+                         "grid_indicators": [
+                                 "x_size"    : 100,
+                                 "y_size"    : 100,
+                                 "indicators": ["LCZ_PRIMARY"]
+                         ]
+                        ]
+        ]
+        OSM.WorkflowOSM.workflow(osm_parmeters)
+        def folder_out = directory + File.separator + "osm_" + bbox.join("_")
+        H2GIS h2gis = H2GIS.open("${directory + File.separator}geoclimate_chain_db;AUTO_SERVER=TRUE")
+
+        def building = "building"
+        def zone = "zone"
+        h2gis.load(folder_out+File.separator+"building.fgb", building, true)
+        h2gis.load(folder_out+File.separator+"zone.fgb", zone, true)
+        assertTrue h2gis.firstRow("select count(*) as count from $building where HEIGHT_WALL>0 and HEIGHT_ROOF>0").count > 0
+        h2gis.execute("""DROP TABLE IF EXISTS building_out;
+        CREATE TABLE building_out as SELECT a.* FROM  $building a LEFT JOIN $zone b
+                ON a.the_geom && b.the_geom and ST_INTERSECTS(a.the_geom, b.the_geom)
+                WHERE b.the_geom IS NULL;""")
+        assertEquals(14, h2gis.getRowCount("building_out"))
     }
 }

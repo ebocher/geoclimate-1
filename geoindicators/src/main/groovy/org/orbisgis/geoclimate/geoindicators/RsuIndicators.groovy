@@ -1978,6 +1978,7 @@ String frontalAreaIndexDistribution(JdbcDataSource datasource, String building, 
     // The name of the outputTableName is constructed
     def outputTableName = prefix prefixName, BASE_NAME
 
+    boolean  buildingIsEmpty =  datasource.isEmpty(building)
     if (360 % numberOfDirection == 0 && numberOfDirection % 2 == 0) {
 
         // Temporary table names
@@ -2117,7 +2118,12 @@ String frontalAreaIndexDistribution(JdbcDataSource datasource, String building, 
         // 4. Make the calculations for the last level
         def layer_bottom = listLayersBottom[listLayersBottom.size() - 1]
         // Get the maximum building height
-        def layer_top = datasource.firstRow("SELECT CAST(MAX($HEIGHT_WALL) AS INTEGER) +1 AS MAXH FROM $building").MAXH
+        def layer_top
+        if(buildingIsEmpty){
+            layer_top =1
+        }else {
+            layer_top = datasource.firstRow("SELECT CAST(MAX($HEIGHT_WALL) AS INTEGER) +1 AS MAXH FROM $building").MAXH
+        }
         def deltaH = layer_top - layer_bottom
         tab_H[listLayersBottom.size() - 1] = "${buildFracH}_$layer_bottom"
 
@@ -2471,4 +2477,45 @@ String groundLayer(JdbcDataSource datasource, String zone, String id_zone,
         error """Cannot compute the unified ground layer"""
     }
     return outputTableName
+}
+
+/**
+ * Process used to compute the average street width needed by models such as TARGET. A simple approach based
+ * on the street canyons assumption is used for the calculation. The area weighted mean building height is divided
+ * by the aspect ratio (defined as the sum of facade area within a given RSU area divided by the area of free
+ * surfaces of the given RSU (not covered by buildings). The "avg_height_roof_area_weighted",
+ * "rsu_free_external_facade_density" and "rsu_building_density" are used for the calculation.
+ *
+ * @param datasource A connexion to a database (H2GIS, PostGIS, ...) where are stored the input table and in which
+ * the resulting database will be stored
+ * @param rsuTable The name of the input ITable where are stored the RSU
+ * @param avgHeightRoofAreaWeightedColumn The name of the column where are stored the area weighted mean building height
+ * values (within the rsu Table)
+ * @param aspectRatioColumn The name of the column where are stored the aspect ratio values (within the rsu Table)
+ * @param prefixName String use as prefix to name the output table
+ *
+ * @return A database table name.
+ * @author Jérémy Bernard
+ */
+String streetWidth(JdbcDataSource datasource, String rsuTable, String avgHeightRoofAreaWeightedColumn,
+                   String aspectRatioColumn, prefixName) throws Exception {
+    try {
+        def COLUMN_ID_RSU = "id_rsu"
+        def BASE_NAME = "street_width"
+        debug "Executing RSU street width"
+
+        // The name of the outputTableName is constructed
+        def outputTableName = prefix prefixName, "rsu_" + BASE_NAME
+        datasource.execute("""
+                DROP TABLE IF EXISTS $outputTableName; 
+                CREATE TABLE $outputTableName AS 
+                    SELECT CASE WHEN $aspectRatioColumn = 0
+                        THEN null 
+                        ELSE $avgHeightRoofAreaWeightedColumn / $aspectRatioColumn END 
+                    AS $BASE_NAME, $COLUMN_ID_RSU FROM $rsuTable""")
+
+        return outputTableName
+    } catch (SQLException e) {
+        throw new SQLException("Cannot compute the street width at RSU scale", e)
+    }
 }

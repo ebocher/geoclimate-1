@@ -486,11 +486,11 @@ String computeRSUIndicators(JdbcDataSource datasource, String buildingTable,
         if (missingElementsUrb.size() == 0) {
             def queryUrbSurfFrac = """DROP TABLE IF EXISTS $utrfFractionIndic;
                                         CREATE TABLE $utrfFractionIndic AS SELECT $columnIdRsu"""
-            def columnsFrac =[]
+            def columnsFrac = []
             utrfSurfFraction.each { urbIndicator, indicatorList ->
                 columnsFrac << "${indicatorList.join("+")} AS $urbIndicator "
             }
-            queryUrbSurfFrac += "${!columnsFrac.isEmpty()?","+columnsFrac.join(","):""} FROM $surfaceFractions"
+            queryUrbSurfFrac += "${!columnsFrac.isEmpty() ? "," + columnsFrac.join(",") : ""} FROM $surfaceFractions"
             datasource.execute(queryUrbSurfFrac)
             finalTablesToJoin.put(utrfFractionIndic, columnIdRsu)
         } else {
@@ -508,11 +508,11 @@ String computeRSUIndicators(JdbcDataSource datasource, String buildingTable,
         if (missingElementsLcz.size() == 0) {
             def querylczSurfFrac = """DROP TABLE IF EXISTS $lczFractionIndic;
                                             CREATE TABLE $lczFractionIndic AS SELECT $columnIdRsu """
-            def columnsSurfFrac =[]
+            def columnsSurfFrac = []
             lczSurfFraction.each { urbIndicator, indicatorList ->
                 columnsSurfFrac << "${indicatorList.join("+")} AS $urbIndicator"
             }
-            querylczSurfFrac += "${!columnsSurfFrac.isEmpty()?","+columnsSurfFrac.join(","):""}  FROM $surfaceFractions"
+            querylczSurfFrac += "${!columnsSurfFrac.isEmpty() ? "," + columnsSurfFrac.join(",") : ""}  FROM $surfaceFractions"
             datasource.execute(querylczSurfFrac)
             finalTablesToJoin.put(lczFractionIndic, columnIdRsu)
         } else {
@@ -943,7 +943,8 @@ Map computeTypologyIndicators(JdbcDataSource datasource, String building_indicat
  * layers such as the hydrology, the vegetation, the roads and the rail network and the boundary of the study zone.
  * The blocks are created from the buildings that are in contact.
  *
- * @param zone The area of zone to be processed *
+ * @param zone The area of zone to be processed
+ * @param zone_extended The extended zone area
  * @param building The building table to be processed
  * @param road The road table to be processed
  * @param rail The rail table to be processed
@@ -959,29 +960,46 @@ Map computeTypologyIndicators(JdbcDataSource datasource, String building_indicat
  * @param datasource A connection to a database
  * @param indicatorUse The use defined for the indicator. Depending on this use, only a part of the indicators could
  * be calculated (default is all indicators : ["LCZ", "UTRF", "TEB"])
+ * @param holeInscribeCircleArea area of the maximum inscribed circle to remove RSU holes
+ * @param clip clip the rsu with the original zone area at the end
  *
  * @return building Table name where are stored the buildings and the RSU and block ID
  * @return block Table name where are stored the blocks and the RSU ID
  * @return rsu Table name where are stored the RSU
  */
-Map createUnitsOfAnalysis(JdbcDataSource datasource, String zone, String building,
+Map createUnitsOfAnalysis(JdbcDataSource datasource, String zone, String zone_extended, String building,
                           String road, String rail, String vegetation,
                           String water, String sea_land_mask, String urban_areas,
                           String rsu, double surface_vegetation,
                           double surface_hydro, double surface_urban_areas,
-                          double snappingTolerance,
-                          List indicatorUse = ["LCZ", "UTRF", "TEB"], String prefixName = "") throws Exception {
+                          double snappingTolerance,double holeInscribeCircleArea,boolean clip=true,
+                          List indicatorUse = ["LCZ", "UTRF", "TEB"],  String prefixName = "") throws Exception {
     info "Create the spatial units..."
     def idRsu = "id_rsu"
     def tablesToDrop = []
     if (!rsu) {
         // Create the RSU
-        rsu = Geoindicators.SpatialUnits.createTSU(datasource, zone, road, rail,
+        rsu = Geoindicators.SpatialUnits.createTSU(datasource, zone_extended, road, rail,
                 vegetation, water,
                 sea_land_mask, urban_areas, surface_vegetation,
-                surface_hydro, surface_urban_areas, prefixName)
+                surface_hydro, surface_urban_areas,holeInscribeCircleArea, prefixName)
+        // Clip the RSU if the argument is set to true and if the the zone is different than the zone_extended
+        if (clip && (zone_extended && zone != zone_extended)) {
+            String rsu_tmp = postfix("rsu")
+            datasource.createSpatialIndex(rsu)
+            datasource.createSpatialIndex(zone)
+            datasource.execute("""
+            DROP TABLE IF EXISTS $rsu_tmp;
+            CREATE TABLE $rsu_tmp as
+            SELECT CAST((row_number() over()) as Integer) as id_rsu, the_geom FROM ST_EXPLODE('(
+            SELECT ST_CollectionExtract(ST_INTERSECTION(a.the_geom, b.the_geom),3) as the_geom 
+            from $rsu as a, $zone as b 
+            where a.the_geom && b.the_geom and st_intersects(a.the_geom, b.the_geom))');
+            DROP TABLE IF EXISTS $rsu;
+            """)
+            rsu = rsu_tmp
+        }
     }
-
 
     // By default, the building table is used to calculate the relations between buildings and RSU
     def inputLowerScaleBuRsu = building
@@ -1034,14 +1052,17 @@ Map createUnitsOfAnalysis(JdbcDataSource datasource, String zone, String buildin
  */
 Map getParameters() {
     return [
-            "surface_vegetation"               : 10000d, "surface_hydro": 2500d, "surface_urban_areas": 10000d,
-            "snappingTolerance"                : 0.01d, "indicatorUse": ["LCZ", "UTRF", "TEB"],
+            "clip"                             : true,
+            "surface_vegetation"               : 10000f,
+            "surface_hydro"                    : 2500f,
+            "surface_urban_areas"              : 10000f,
+            "surface_hole_rsu"                 : 5000f,
+            "snappingTolerance"                : 0.01f, "indicatorUse": ["LCZ", "UTRF", "TEB"],
             "mapOfWeights"                     : ["sky_view_factor"             : 1, "aspect_ratio": 1, "building_surface_fraction": 1,
                                                   "impervious_surface_fraction" : 1, "pervious_surface_fraction": 1,
                                                   "height_of_roughness_elements": 1, "terrain_roughness_length": 1],
             "utrfModelName"                    : "",
             "buildingHeightModelName"          : "",
-            "nbEstimatedBuildHeight"           : 0,
             "svfSimplified"                    : true,
             "facadeDensListLayersBottom"       : [0, 10, 20, 30, 40, 50],
             "buildHeightListLayersBottom"      : [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50],
@@ -1056,7 +1077,7 @@ Map getParameters() {
             "angleRangeSizeRoDirection"        : 30,
             "surfSuperpositions"               : ["high_vegetation": ["water", "building", "low_vegetation", "rail", "road", "impervious"]],
             "surfPriorities"                   : ["water", "building", "high_vegetation", "low_vegetation", "rail", "road", "impervious"],
-            "buildingAreaTypeAndCompositionLcz": ["undefined_lcz"     : ["building"],
+            "buildingAreaTypeAndCompositionLcz": ["undefined_lcz"     : ["building", "undefined"],
                                                   "light_industry_lcz": ["industrial", "factory", "warehouse", "port"],
                                                   "commercial_lcz"    : ["commercial", "shop", "retail", "port",
                                                                          "exhibition_centre", "cinema"],
@@ -1065,11 +1086,11 @@ Map getParameters() {
                                                                          "abbey", "condominium", "villa", "dormitory", "sheltered_housing",
                                                                          "workers_dormitory", "terrace", "residential", "cabin"]],
             "floorAreaTypeAndCompositionLcz"   : [:],
-            "buildingAreaTypeAndCompositionTeb": ["undefined"            : ["building"],
+            "buildingAreaTypeAndCompositionTeb": ["undefined"            : ["building", "undefined"],
                                                   "individual_housing"   : ["house", "detached", "bungalow", "farm", "villa", "terrace", "cabin"],
                                                   "collective_housing"   : ["apartments", "barracks", "abbey", "dormitory",
                                                                             "sheltered_housing", "workers_dormitory",
-                                                                            "condominium", "residential"],
+                                                                            "condominium"],
                                                   "undefined_residential": ["residential"],
                                                   "commercial"           : ["commercial", "internet_cafe", "money_transfer", "pharmacy",
                                                                             "post_office", "cinema", "arts_centre", "brothel", "casino",
@@ -1094,11 +1115,11 @@ Map getParameters() {
                                                                             "wayside_shrine", "station", "stable", "sty", "greenhouse", "kiosk", "marketplace",
                                                                             "marker", "warehouse", "planetarium", "fire_station", "water_tower", "grandstand",
                                                                             "transportation", "toll_booth", "hut", "shed"]],
-            "floorAreaTypeAndCompositionTeb"   : ["undefined"            : ["building"],
+            "floorAreaTypeAndCompositionTeb"   : ["undefined"            : ["building", "undefined"],
                                                   "individual_housing"   : ["house", "detached", "bungalow", "farm", "villa", "terrace", "cabin"],
                                                   "collective_housing"   : ["apartments", "barracks", "abbey", "dormitory",
                                                                             "sheltered_housing", "workers_dormitory",
-                                                                            "condominium", "residential"],
+                                                                            "condominium"],
                                                   "undefined_residential": ["residential"],
                                                   "commercial"           : ["commercial", "internet_cafe", "money_transfer", "pharmacy",
                                                                             "post_office", "cinema", "arts_centre", "brothel", "casino",
@@ -1194,7 +1215,7 @@ Map getParameters(Map parameters) {
  * This table can be empty if the user decides not to calculate it.
  *
  */
-Map computeAllGeoIndicators(JdbcDataSource datasource, String zone, String building, String road, String rail, String vegetation,
+Map computeAllGeoIndicators(JdbcDataSource datasource, String zone, String zone_extended, String building, String road, String rail, String vegetation,
                             String water, String impervious, String buildingEstimateTableName,
                             String sea_land_mask, String urban_areas, String rsuTable,
                             Map parameters = [:], String prefixName) throws Exception {
@@ -1207,28 +1228,27 @@ Map computeAllGeoIndicators(JdbcDataSource datasource, String zone, String build
     def surface_urban_areas = inputParameters.surface_urban_areas
     def snappingTolerance = inputParameters.snappingTolerance
     def buildingHeightModelName = inputParameters.buildingHeightModelName
+    def holeInscribeCircleArea = inputParameters.surface_hole_rsu
     def indicatorUse = inputParameters.indicatorUse
-
+    def clipGeom = inputParameters.clip
+    def nb_building_updated = 0
     //Estimate height
     if (inputParameters.buildingHeightModelName && datasource.getRowCount(buildingEstimateTableName) > 0) {
-        def start = System.currentTimeMillis()
         enableTableCache()
         def buildingTableName
         def rsuTableForHeightEst
         def buildingIndicatorsForHeightEst
         def blockIndicatorsForHeightEst
         def rsuIndicatorsForHeightEst
-        def nbBuildingEstimated
-
         // Estimate building height
-        Map estimHeight = estimateBuildingHeight(datasource, zone, building,
+        Map estimHeight = estimateBuildingHeight(datasource, zone,zone_extended, building,
                 road, rail, vegetation,
                 water, impervious,
                 buildingEstimateTableName,
                 sea_land_mask, urban_areas, rsuTable,
                 surface_vegetation, surface_hydro, surface_urban_areas,
                 snappingTolerance,
-                buildingHeightModelName, prefixName)
+                buildingHeightModelName,holeInscribeCircleArea, clipGeom, prefixName)
         if (!estimHeight) {
             throw new Exception("Cannot estimate building height")
         } else {
@@ -1237,36 +1257,39 @@ Map computeAllGeoIndicators(JdbcDataSource datasource, String zone, String build
             buildingIndicatorsForHeightEst = estimHeight.building_indicators_without_height
             blockIndicatorsForHeightEst = estimHeight.block_indicators_without_height
             rsuIndicatorsForHeightEst = estimHeight.rsu_indicators_without_height
-            nbBuildingEstimated = estimHeight.nb_building_estimated
+            nb_building_updated = estimHeight.nb_building_updated
         }
 
         indicatorUse = inputParameters.indicatorUse
-        //This is a shortcut to extract building with estimated height
-        if (indicatorUse.isEmpty()) {
+        //This is a shortcut to produce only the data
+        //TARGET indicators can be computed at the grid scale with the input data
+        if (indicatorUse.isEmpty() || (indicatorUse.size() == 1 && indicatorUse.contains("TARGET"))) {
             //Clean the System properties that stores intermediate table names
             datasource.dropTable(getCachedTableNames())
             clearTablesCache()
-            return ["building_indicators": buildingIndicatorsForHeightEst,
-                    "block_indicators"   : blockIndicatorsForHeightEst,
-                    "rsu_indicators"     : rsuIndicatorsForHeightEst,
-                    "rsu_lcz"            : null,
-                    "zone"               : zone,
-                    "rsu_utrf_area"      : null,
-                    "rsu_utrf_floor_area": null,
-                    "building_utrf"      : null,
-                    "building"           : buildingTableName]
+            return ["building_indicators"  : buildingIndicatorsForHeightEst,
+                    "block_indicators"     : blockIndicatorsForHeightEst,
+                    "rsu_indicators"       : rsuIndicatorsForHeightEst,
+                    "rsu_lcz"              : null,
+                    "rsu_utrf_area"        : null,
+                    "rsu_utrf_floor_area"  : null,
+                    "building_utrf"        : null,
+                    "building"             : buildingTableName,
+                    "zone_extended"        : zone_extended,
+                    "zone"                  : zone,
+                    "nb_building_updated": nb_building_updated]
         }
         def buildingForGeoCalc
         def blocksForGeoCalc
         def rsuForGeoCalc
         // If the RSU is provided by the user, new relations between units should be performed
         if (rsuTable) {
-            Map spatialUnitsForCalc = createUnitsOfAnalysis(datasource, zone,
+            Map spatialUnitsForCalc = createUnitsOfAnalysis(datasource, zone, zone_extended,
                     building, road, rail,
                     vegetation,
                     water, sea_land_mask, "", rsuTable,
                     surface_vegetation,
-                    surface_hydro, surface_urban_areas, snappingTolerance, indicatorUse,
+                    surface_hydro, surface_urban_areas, snappingTolerance, holeInscribeCircleArea,false,indicatorUse,
                     prefixName)
             buildingForGeoCalc = spatialUnitsForCalc.building
             blocksForGeoCalc = spatialUnitsForCalc.block
@@ -1286,20 +1309,20 @@ Map computeAllGeoIndicators(JdbcDataSource datasource, String zone, String build
         }
 
         //Compute Geoindicators (at all scales + typologies)
-        parameters.nbBuildingEstimated = nbBuildingEstimated
-        Map geoIndicators = computeGeoclimateIndicators(datasource, zone,
+        Map geoIndicators = computeGeoclimateIndicators(datasource, zone_extended,
                 buildingForGeoCalc, blocksForGeoCalc,
                 rsuForGeoCalc, road, vegetation,
                 water, impervious, rail, inputParameters, prefixName)
         if (!geoIndicators) {
             error "Cannot build the geoindicators"
             datasource.dropTable(blocksForGeoCalc, rsuForGeoCalc, buildingIndicatorsForHeightEst, rsuIndicatorsForHeightEst)
-            return
+            return null
         } else {
             //Clean the System properties that stores intermediate table names
             datasource.dropTable(getCachedTableNames())
             clearTablesCache()
             geoIndicators.put("building", buildingTableName)
+            geoIndicators.put("nb_building_updated", nb_building_updated)
             datasource.dropTable(blocksForGeoCalc, rsuForGeoCalc, buildingIndicatorsForHeightEst, rsuIndicatorsForHeightEst)
             return geoIndicators
         }
@@ -1307,24 +1330,25 @@ Map computeAllGeoIndicators(JdbcDataSource datasource, String zone, String build
         datasource.dropTable(getCachedTableNames())
         clearTablesCache()
         //Create spatial units and relations : building, block, rsu
-        Map spatialUnits = createUnitsOfAnalysis(datasource, zone,
+        Map spatialUnits = createUnitsOfAnalysis(datasource, zone, zone_extended,
                 building, road,
                 rail, vegetation,
                 water, sea_land_mask, "", rsuTable,
                 surface_vegetation,
-                surface_hydro, surface_urban_areas, snappingTolerance, indicatorUse,
+                surface_hydro, surface_urban_areas, snappingTolerance,holeInscribeCircleArea,clipGeom,indicatorUse,
                 prefixName)
         def relationBuildings = spatialUnits.building
         def relationBlocks = spatialUnits.block
         rsuTable = spatialUnits.rsu
 
-        Map geoIndicators = computeGeoclimateIndicators(datasource, zone,
+        Map geoIndicators = computeGeoclimateIndicators(datasource, zone_extended,
                 relationBuildings, relationBlocks,
                 rsuTable, road, vegetation, water, impervious, rail, inputParameters, prefixName)
         if (!geoIndicators) {
             throw new Exception("Cannot build the geoindicators")
         } else {
             geoIndicators.put("building", building)
+            geoIndicators.put("nb_building_updated", nb_building_updated)
             return geoIndicators
         }
     }
@@ -1339,12 +1363,13 @@ Map computeAllGeoIndicators(JdbcDataSource datasource, String zone, String build
  *          1 integer being the number of buildings having their height estimated
  *
  */
-Map estimateBuildingHeight(JdbcDataSource datasource, String zone, String building,
+Map estimateBuildingHeight(JdbcDataSource datasource, String zone, String zone_extended, String building,
                            String road, String rail, String vegetation,
                            String water, String impervious,
                            String building_estimate, String sea_land_mask, String urban_areas, String rsu,
                            double surface_vegetation, double surface_hydro, double surface_urban_areas,
-                           double snappingTolerance, String buildingHeightModelName, String prefixName = "") throws Exception {
+                           double snappingTolerance, String buildingHeightModelName,
+                           double holeInscribeCircleArea, boolean clipGeom, String prefixName = "") throws Exception {
     if (!building_estimate) {
         throw new IllegalArgumentException("To estimate the building height a table that contains the list of building to estimate must be provided")
     }
@@ -1355,10 +1380,10 @@ Map estimateBuildingHeight(JdbcDataSource datasource, String zone, String buildi
     info "Geoclimate will try to estimate the building heights with the model $buildingHeightModelName."
 
     //Create spatial units and relations : building, block, rsu
-    Map spatialUnits = createUnitsOfAnalysis(datasource, zone,
+    Map spatialUnits = createUnitsOfAnalysis(datasource, zone,zone_extended,
             building, road, rail, vegetation,
             water, sea_land_mask, urban_areas, rsu,
-            surface_vegetation, surface_hydro, surface_urban_areas, snappingTolerance, ["UTRF"],
+            surface_vegetation, surface_hydro, surface_urban_areas, snappingTolerance, holeInscribeCircleArea,clipGeom,["UTRF"],
             prefixName)
     def relationBuildings = spatialUnits.building
     def relationBlocks = spatialUnits.block
@@ -1384,50 +1409,51 @@ Map estimateBuildingHeight(JdbcDataSource datasource, String zone, String buildi
 
     def estimated_building_with_indicators = "ESTIMATED_BUILDING_INDICATORS_${UUID.randomUUID().toString().replaceAll("-", "_")}"
 
-    datasource.execute """DROP TABLE IF EXISTS $estimated_building_with_indicators;
+    datasource.execute("""DROP TABLE IF EXISTS $estimated_building_with_indicators;
                                                CREATE TABLE $estimated_building_with_indicators 
                                                         AS SELECT a.*
                                                         FROM $buildingIndicatorsForHeightEst a 
                                                             RIGHT JOIN $building_estimate b 
                                                             ON a.id_build=b.id_build
-                                                        WHERE a.ID_RSU IS NOT NULL;""".toString()
+                                                        WHERE a.ID_RSU IS NOT NULL;""")
 
     info "Collect building indicators to estimate the height"
-
-    def gatheredScales = Geoindicators.GenericIndicators.gatherScales(datasource,
-            estimated_building_with_indicators,
-            blockIndicatorsForHeightEst, rsuIndicatorsForHeightEst,
-            "BUILDING", ["AVG", "STD"],
-            prefixName)
-
-    def buildingTableName = "BUILDING_TABLE_WITH_RSU_AND_BLOCK_ID"
     int nbBuildingEstimated = 0
-    def buildEstimatedHeight
-    if (datasource.getTable(gatheredScales).isEmpty()) {
-        info "No building height to estimate"
-        nbBuildingEstimated = 0
-        datasource.execute """DROP TABLE IF EXISTS $buildingTableName;
+    // NOTE : Only buildings in an RSU can have their height predicted because the model
+    // uses indicators calculated on several unit scales :  RSU, BLOCK, BUILDING
+    if(datasource.getRowCount(estimated_building_with_indicators)>0){
+        def gatheredScales = Geoindicators.GenericIndicators.gatherScales(datasource,
+                estimated_building_with_indicators,
+                blockIndicatorsForHeightEst, rsuIndicatorsForHeightEst,
+                "BUILDING", ["AVG", "STD"],
+                prefixName)
+
+        def buildingTableName = "BUILDING_TABLE_WITH_RSU_AND_BLOCK_ID"
+        def buildEstimatedHeight
+        if (datasource.isEmpty(gatheredScales)) {
+            info "No building height to estimate"
+            datasource.execute("""DROP TABLE IF EXISTS $buildingTableName;
                                            CREATE TABLE $buildingTableName 
                                                 AS SELECT  THE_GEOM, ID_BUILD, ID_SOURCE, HEIGHT_WALL ,
-                                                    HEIGHT_ROOF, NB_LEV, TYPE, MAIN_USE, ZINDEX, ID_BLOCK, ID_RSU from $estimated_building_with_indicators""".toString()
+                                                    HEIGHT_ROOF, NB_LEV, TYPE, MAIN_USE, ZINDEX, ID_BLOCK, ID_RSU from $estimated_building_with_indicators""")
 
-    } else {
-        info "Start estimating the building height"
-        //Apply RF model
-        buildEstimatedHeight = Geoindicators.TypologyClassification.applyRandomForestModel(datasource,
-                gatheredScales, buildingHeightModelName, "id_build", prefixName)
+        } else {
+            info "Start estimating the building height"
+            //Apply RF model
+            buildEstimatedHeight = Geoindicators.TypologyClassification.applyRandomForestModel(datasource,
+                    gatheredScales, buildingHeightModelName, "id_build", prefixName)
 
-        //Update the abstract building table
-        info "Replace the input building table by the estimated height"
+            //Update the abstract building table
+            info "Replace the input building table by the estimated height"
 
-        nbBuildingEstimated = datasource.firstRow("select count(*) as count from $buildEstimatedHeight".toString()).count
+            nbBuildingEstimated = datasource.firstRow("select count(*) as count from $buildEstimatedHeight".toString()).count
 
-        datasource.createIndex(buildEstimatedHeight, "id_build")
+            datasource.createIndex(buildEstimatedHeight, "id_build")
 
-        def formatedBuildEstimatedHeight = "INPUT_BUILDING_REFORMATED_${UUID.randomUUID().toString().replaceAll("-", "_")}"
+            def formatedBuildEstimatedHeight = "INPUT_BUILDING_REFORMATED_${UUID.randomUUID().toString().replaceAll("-", "_")}"
 
-        //Use build table indicators
-        datasource.execute """DROP TABLE IF EXISTS $formatedBuildEstimatedHeight;
+            //Use build table indicators
+            datasource.execute """DROP TABLE IF EXISTS $formatedBuildEstimatedHeight;
                                                CREATE TABLE $formatedBuildEstimatedHeight as 
                                                 SELECT  a.THE_GEOM, a.ID_BUILD,a.ID_SOURCE,
                                             CASE WHEN b.HEIGHT_ROOF IS NULL THEN a.HEIGHT_WALL ELSE 0 END AS HEIGHT_WALL ,
@@ -1436,23 +1462,32 @@ Map estimateBuildingHeight(JdbcDataSource datasource, String zone, String buildi
                                                 from $buildingIndicatorsForHeightEst
                                             a LEFT JOIN $buildEstimatedHeight b on a.id_build=b.id_build""".toString()
 
-        //We must format only estimated buildings
-        //Apply format on the new abstract table
-        def epsg = datasource.getSrid(formatedBuildEstimatedHeight)
-        buildingTableName = formatEstimatedBuilding(datasource, formatedBuildEstimatedHeight, epsg)
-        //Drop intermediate tables
-        datasource.execute """DROP TABLE IF EXISTS $estimated_building_with_indicators,
+            //We must format only estimated buildings
+            //Apply format on the new abstract table
+            def epsg = datasource.getSrid(formatedBuildEstimatedHeight)
+            buildingTableName = formatEstimatedBuilding(datasource, formatedBuildEstimatedHeight, epsg)
+            //Drop intermediate tables
+            datasource.execute """DROP TABLE IF EXISTS $estimated_building_with_indicators,
                                             $formatedBuildEstimatedHeight, $buildEstimatedHeight,
                                             $gatheredScales""".toString()
 
+        }
+        return ["building"                          : buildingTableName,
+                "rsu"                               : rsuTable,
+                "building_indicators_without_height": buildingIndicatorsForHeightEst,
+                "block_indicators_without_height"   : blockIndicatorsForHeightEst,
+                "rsu_indicators_without_height"     : rsuIndicatorsForHeightEst,
+                "nb_building_updated"             : nbBuildingEstimated]
     }
+    return [    "building"                          : building,
+                "rsu"                               : rsuTable,
+                "building_indicators_without_height": buildingIndicatorsForHeightEst,
+                "block_indicators_without_height"   : blockIndicatorsForHeightEst,
+                "rsu_indicators_without_height"     : rsuIndicatorsForHeightEst,
+                "nb_building_updated"             : nbBuildingEstimated]
 
-    return ["building"                          : buildingTableName,
-            "rsu"                               : rsuTable,
-            "building_indicators_without_height": buildingIndicatorsForHeightEst,
-            "block_indicators_without_height"   : blockIndicatorsForHeightEst,
-            "rsu_indicators_without_height"     : rsuIndicatorsForHeightEst,
-            "nb_building_estimated"             : nbBuildingEstimated]
+
+
 }
 
 
@@ -1471,14 +1506,12 @@ Map estimateBuildingHeight(JdbcDataSource datasource, String zone, String buildi
 Map computeGeoclimateIndicators(JdbcDataSource datasource, String zone, String buildingsWithRelations, String blocksWithRelations, String rsu,
                                 String road, String vegetation,
                                 String water, String impervious, String rail, Map parameters = [
-        "indicatorUse" : ["LCZ", "UTRF", "TEB"], "svfSimplified": false,
+        "indicatorUse" : ["LCZ", "UTRF", "TEB"], "svfSimplified": true,
         "mapOfWeights" : ["sky_view_factor"             : 1, "aspect_ratio": 1, "building_surface_fraction": 1,
                           "impervious_surface_fraction" : 1, "pervious_surface_fraction": 1,
                           "height_of_roughness_elements": 1, "terrain_roughness_length": 1],
-        "utrfModelName": "", "nbEstimatedBuildHeight": 0], String prefixName = "") throws Exception {
+        "utrfModelName": ""], String prefixName = "") throws Exception {
     info "Start computing the geoindicators..."
-    def start = System.currentTimeMillis()
-
     def indicatorUse = parameters.indicatorUse
     //Compute building indicators
     String buildingIndicators = computeBuildingsIndicators(datasource, buildingsWithRelations,
@@ -1502,55 +1535,73 @@ Map computeGeoclimateIndicators(JdbcDataSource datasource, String zone, String b
             rsuIndicators, parameters, prefixName)
 
     info "All geoindicators have been computed"
-    def rsuLcz = computeTypologyIndicators.rsu_lcz
-    def utrfArea = computeTypologyIndicators.rsu_utrf_area
-    def utrfFloorArea = computeTypologyIndicators.rsu_utrf_floor_area
-    def utrfBuilding = computeTypologyIndicators.building_utrf
-
-
-    //Populate reporting
-    def nbBuilding = datasource.firstRow("select count(*) as count from ${buildingIndicators} WHERE ID_RSU IS NOT NULL".toString()).count
-    def nbBlock = 0
-    if (blockIndicators) {
-        nbBlock = datasource.firstRow("select count(*) as count from ${blockIndicators}".toString()).count
-    }
-    def nbRSU = datasource.firstRow("select count(*) as count from ${rsuIndicators}".toString()).count
-    //Alter the zone table to add statics
-    if (!datasource.getColumnNames(zone).contains("NB_ESTIMATED_BUILDING")) {
-        datasource.execute """ALTER TABLE ${zone} ADD COLUMN (
-                    NB_BUILDING INTEGER,
-                    NB_ESTIMATED_BUILDING INTEGER,
-                    NB_BLOCK INTEGER,
-                    NB_RSU INTEGER,
-                    COMPUTATION_TIME INTEGER,
-                    LAST_UPDATE VARCHAR, VERSION VARCHAR, BUILD_NUMBER VARCHAR
-                    )""".toString()
-    }
-
-    def nbEstimatedBuildHeight = parameters.nbEstimatedBuildHeight
-    //Update reporting to the zone table
-    datasource.execute """update ${zone} 
-                set nb_estimated_building = ${nbEstimatedBuildHeight}, 
-                nb_building = ${nbBuilding}, 
-                nb_block =  ${nbBlock},
-                nb_rsu = ${nbRSU},
-                computation_time = ${(System.currentTimeMillis() - start) / 1000},
-                last_update = CAST(now() AS VARCHAR),
-                version = '${Geoindicators.version()}',
-                build_number = '${Geoindicators.buildNumber()}'""".toString()
-
 
     return ["building_indicators": buildingIndicators,
             "block_indicators"   : blockIndicators,
             "rsu_indicators"     : rsuIndicators,
-            "rsu_lcz"            : rsuLcz,
-            "zone"               : zone,
-            "rsu_utrf_area"      : utrfArea,
-            "rsu_utrf_floor_area": utrfFloorArea,
-            "building_utrf"      : utrfBuilding]
+            "rsu_lcz"            : computeTypologyIndicators.rsu_lcz,
+            "zone_extended"      : zone,
+            "rsu_utrf_area"      : computeTypologyIndicators.rsu_utrf_area,
+            "rsu_utrf_floor_area": computeTypologyIndicators.rsu_utrf_floor_area,
+            "building_utrf"      : computeTypologyIndicators.building_utrf]
 }
+
 /**
- * This process is used to commpute aggregate geoclimate indicators on a grid set as input
+ * Compute some statistics and add them to the zone table
+ * @param datasource local database
+ * @param zone zone table
+ * @param building_indicators building table
+ * @param block_indicators block table
+ * @param rsu_indicators rsu table
+ * @param start_process start of process in milliseconds
+ * @param nb_estimated_building number of building with the height value estimated
+ * @return
+ */
+def computeZoneStats(JdbcDataSource datasource, String zone, String building_indicators, String block_indicators, String rsu_indicators,
+                     long start_process, int nb_estimated_building) throws Exception {
+    try {
+        //Populate reporting
+        def nbBuilding = 0
+        if (building_indicators) {
+            nbBuilding = datasource.firstRow("select count(*) as count from ${building_indicators} WHERE ID_RSU IS NOT NULL".toString()).count
+        }
+        def nbBlock = 0
+        if (block_indicators) {
+            nbBlock = datasource.firstRow("select count(*) as count from ${block_indicators}".toString()).count
+        }
+        def nbRSU = 0
+        if (rsu_indicators) {
+            nbRSU = datasource.firstRow("select count(*) as count from ${rsu_indicators}".toString()).count
+        }
+
+        //Alter the zone table to add statics
+        datasource.execute("""
+                ALTER TABLE ${zone} ADD COLUMN IF NOT EXISTS NB_BUILDING INTEGER;
+                ALTER TABLE ${zone} ADD COLUMN IF NOT EXISTS NB_ESTIMATED_BUILDING INTEGER;
+                ALTER TABLE ${zone} ADD COLUMN IF NOT EXISTS NB_BLOCK INTEGER;
+                ALTER TABLE ${zone} ADD COLUMN IF NOT EXISTS NB_RSU INTEGER;
+                ALTER TABLE ${zone} ADD COLUMN IF NOT EXISTS COMPUTATION_TIME INTEGER;
+                ALTER TABLE ${zone} ADD COLUMN IF NOT EXISTS LAST_UPDATE VARCHAR; 
+                ALTER TABLE ${zone} ADD COLUMN IF NOT EXISTS VERSION VARCHAR;
+                ALTER TABLE ${zone} ADD COLUMN IF NOT EXISTS BUILD_NUMBER VARCHAR;""")
+
+        //Update reporting to the zone table
+        datasource.execute("""update ${zone} 
+                set nb_estimated_building = ${nb_estimated_building}, 
+                nb_building = ${nbBuilding}, 
+                nb_block =  ${nbBlock},
+                nb_rsu = ${nbRSU},
+                computation_time = ${(System.currentTimeMillis() - start_process) / 1000},
+                last_update = CAST(now() AS VARCHAR),
+                version = '${Geoindicators.version()}',
+                build_number = '${Geoindicators.buildNumber()}'""")
+    } catch (SQLException ex) {
+        throw new SQLException("Cannot update the statistics on zone table", ex)
+    }
+}
+
+/**
+ * This process is used to compute aggregate geoclimate indicators on a grid set as input
  *
  * @param h2gis_datasource the local H2GIS database
  * @param gridTableName the name of the grid table to aggregate the data
@@ -1594,22 +1645,34 @@ String rasterizeIndicators(JdbcDataSource datasource,
     def indicatorTablesToJoin = [:]
     indicatorTablesToJoin.put(grid, grid_column_identifier)
 
+    //We check if the COUNT_WARM indicators must be computed.
+    //If yes we collect all window sizes
+    def window_sizes=[]
+    list_indicators_upper.each{
+        if(it.startsWith("COUNT_WARM_")){
+            window_sizes<< Integer.valueOf(it.substring(11, it.length()))
+        }
+    }
+
+    // Needed for intermediate calculations...
+    def tablesToJoinForWidth = [:]
+
     //An array to execute some commands on the final table
     def sqlUpdateCommand = []
     /*
     * Make aggregation process with previous grid and current rsu lcz
     */
-    if (list_indicators_upper.intersect(["LCZ_FRACTION", "LCZ_PRIMARY", "URBAN_SPRAWL_AREAS", "URBAN_SPRAWL_DISTANCES", "URBAN_SPRAWL_COOL_DISTANCES"]) && rsu_lcz) {
+    if ((list_indicators_upper.intersect(["LCZ_FRACTION", "LCZ_PRIMARY", "URBAN_SPRAWL_AREAS", "URBAN_SPRAWL_DISTANCES", "URBAN_SPRAWL_COOL_DISTANCES"])|| window_sizes) && rsu_lcz)  {
         def indicatorName = "LCZ_PRIMARY"
-        String upperScaleAreaStatistics = Geoindicators.GenericIndicators.upperScaleAreaStatistics(
+        String lczUpperScaleAreaStatistics = Geoindicators.GenericIndicators.upperScaleAreaStatistics(
                 datasource, grid, grid_column_identifier,
                 rsu_lcz, indicatorName, indicatorName,
                 false, "lcz")
-        if (upperScaleAreaStatistics) {
-            indicatorTablesToJoin.put(upperScaleAreaStatistics, grid_column_identifier)
+        if (lczUpperScaleAreaStatistics) {
+            indicatorTablesToJoin.put(lczUpperScaleAreaStatistics, grid_column_identifier)
             if (list_indicators_upper.contains("LCZ_PRIMARY")) {
                 def resultsDistrib = Geoindicators.GenericIndicators.distributionCharacterization(datasource,
-                        upperScaleAreaStatistics, upperScaleAreaStatistics, grid_column_identifier,
+                        lczUpperScaleAreaStatistics, lczUpperScaleAreaStatistics, grid_column_identifier,
                         ["equality", "uniqueness"],
                         "GREATEST", true, true,
                         "lcz")
@@ -1637,17 +1700,28 @@ String rasterizeIndicators(JdbcDataSource datasource,
                 }
                 def distribLczTableInt = postfix "distribLczTableInt"
 
-                datasource """  DROP TABLE IF EXISTS $distribLczTableInt;
+                datasource.execute("""  DROP TABLE IF EXISTS $distribLczTableInt;
                                 CREATE TABLE $distribLczTableInt
                                         AS SELECT   $grid_column_identifier, $casewhenQuery1 null$parenthesis AS LCZ_PRIMARY,
                                                     $casewhenQuery2 null$parenthesis AS LCZ_SECONDARY, 
                                                     MIN_DISTANCE, LCZ_UNIQUENESS_VALUE, LCZ_EQUALITY_VALUE 
                                         FROM $resultsDistrib;
-                                DROP TABLE IF EXISTS $resultsDistrib""".toString()
+                                DROP TABLE IF EXISTS $resultsDistrib""")
                 tablesToDrop << resultsDistrib
                 indicatorTablesToJoin.put(distribLczTableInt, grid_column_identifier)
+                //We compute COUNT_WARM indicators
+                if(window_sizes){
+                    String grid_lcz_primary_indexes =  postfix("grid_lcz_indexes")
+                    datasource.createIndex(distribLczTableInt, grid_column_identifier)
+                    datasource.execute("""DROP TABLE IF EXISTS ${grid_lcz_primary_indexes};
+                    CREATE TABLE $grid_lcz_primary_indexes as 
+                    select a.$grid_column_identifier, a.id_row, a.id_col, b.LCZ_PRIMARY FROM
+                    $grid as a left join $distribLczTableInt as b on a.$grid_column_identifier=b.$grid_column_identifier;""")
+                    String grid_count_warm = Geoindicators.GridIndicators.gridCountCellsWarm(datasource, grid_lcz_primary_indexes, window_sizes)
+                    indicatorTablesToJoin.put(grid_count_warm, grid_column_identifier)
+                    tablesToDrop<<grid_lcz_primary_indexes
+                }
             }
-
         } else {
             info "Cannot aggregate the LCZ at grid scale"
         }
@@ -1682,28 +1756,36 @@ String rasterizeIndicators(JdbcDataSource datasource,
 
     def unweightedBuildingIndicators = [:]
     def weightedBuildingIndicators = [:]
-    def height_roof_unweighted_list = []
+    HashSet height_roof_unweighted_list = new HashSet()
     list_indicators_upper.each {
         if (it == "BUILDING_FRACTION"
                 || it == "BUILDING_SURFACE_DENSITY" ||
-                it == "ASPECT_RATIO" || it == "FREE_EXTERNAL_FACADE_DENSITY") {
+                it == "ASPECT_RATIO" || it == "FREE_EXTERNAL_FACADE_DENSITY" || it == "STREET_WIDTH") {
             columnFractionsList.put(priorities.indexOf("building"), "building")
-        } else if (it == "WATER_FRACTION") {
+        }
+        if (it == "WATER_FRACTION") {
             columnFractionsList.put(priorities.indexOf("water"), "water")
-        } else if (it == "VEGETATION_FRACTION") {
+        }
+        if (it == "VEGETATION_FRACTION") {
             columnFractionsList.put(priorities.indexOf("high_vegetation"), "high_vegetation")
             columnFractionsList.put(priorities.indexOf("low_vegetation"), "low_vegetation")
-        } else if (it == "ROAD_FRACTION") {
+        }
+        if (it == "ROAD_FRACTION") {
             columnFractionsList.put(priorities.indexOf("road"), "road")
-        } else if (it == "IMPERVIOUS_FRACTION") {
+        }
+        if (it == "IMPERVIOUS_FRACTION") {
             columnFractionsList.put(priorities.indexOf("impervious"), "impervious")
-        } else if (it == "BUILDING_HEIGHT" && building) {
+        }
+        if (it == "BUILDING_HEIGHT" && building) {
             height_roof_unweighted_list.addAll(["AVG", "STD"])
-        } else if (it == "BUILDING_HEIGHT_WEIGHTED" && building) {
+        }
+        if ((it == "BUILDING_HEIGHT_WEIGHTED" || it == "STREET_WIDTH") && building) {
             weightedBuildingIndicators["height_roof"] = ["area": ["AVG", "STD"]]
-        } else if (it == "BUILDING_POP" && building) {
+        }
+        if (it == "BUILDING_POP" && building) {
             unweightedBuildingIndicators.put("pop", ["SUM"])
-        } else if (it == "HEIGHT_OF_ROUGHNESS_ELEMENTS" && building) {
+        }
+        if (it == "HEIGHT_OF_ROUGHNESS_ELEMENTS" && building) {
             height_roof_unweighted_list.add("GEOM_AVG")
         }
     }
@@ -1724,6 +1806,7 @@ String rasterizeIndicators(JdbcDataSource datasource,
                     datasource, grid, grid_column_identifier, superpositionsTableGrid,
                     [:], priorities_tmp, prefixName)
             indicatorTablesToJoin.put(surfaceFractionsProcess, grid_column_identifier)
+            tablesToJoinForWidth.put(surfaceFractionsProcess, grid_column_identifier)
 
             tablesToDrop << superpositionsTableGrid
         } else {
@@ -1754,7 +1837,9 @@ String rasterizeIndicators(JdbcDataSource datasource,
                 weightedBuildingIndicators, prefixName)
 
         indicatorTablesToJoin.put(computeWeightedAggregStat, grid_column_identifier)
+        tablesToJoinForWidth.put(computeWeightedAggregStat, grid_column_identifier)
 
+        tablesToDrop << computeWeightedAggregStat
     }
 
     if (list_indicators_upper.contains("BUILDING_TYPE_FRACTION") && building) {
@@ -1772,7 +1857,7 @@ String rasterizeIndicators(JdbcDataSource datasource,
 
     }
 
-    if ((list_indicators_upper.intersect(["FREE_EXTERNAL_FACADE_DENSITY", "ASPECT_RATIO", "BUILDING_SURFACE_DENSITY"]) && building)) {
+    if (list_indicators_upper.intersect(["FREE_EXTERNAL_FACADE_DENSITY", "ASPECT_RATIO", "BUILDING_SURFACE_DENSITY", "STREET_WIDTH"]) && building) {
         if (!createScalesRelationsGridBl) {
             // Create the relations between grid cells and buildings
             createScalesRelationsGridBl = Geoindicators.SpatialUnits.spatialJoin(datasource,
@@ -1781,11 +1866,38 @@ String rasterizeIndicators(JdbcDataSource datasource,
         }
         def freeFacadeDensityExact = Geoindicators.RsuIndicators.freeExternalFacadeDensityExact(datasource, createScalesRelationsGridBl,
                 grid, grid_column_identifier, prefixName)
+        tablesToJoinForWidth.put(freeFacadeDensityExact, grid_column_identifier)
         if (freeFacadeDensityExact) {
-            if (list_indicators_upper.intersect(["FREE_EXTERNAL_FACADE_DENSITY", "ASPECT_RATIO"])) {
+            if (list_indicators_upper.intersect(["FREE_EXTERNAL_FACADE_DENSITY", "ASPECT_RATIO", "STREET_WIDTH"])) {
                 indicatorTablesToJoin.put(freeFacadeDensityExact, grid_column_identifier)
                 tablesToDrop << freeFacadeDensityExact
             }
+
+            def gridForWidth = Geoindicators.DataUtils.joinTables(datasource, tablesToJoinForWidth, "grid_for_width")
+            tablesToDrop << gridForWidth
+
+            // Compute the aspect_ratio (and street width if needed)
+            if (list_indicators_upper.intersect(["ASPECT_RATIO", "STREET_WIDTH"]) && building) {
+                datasource "ALTER TABLE $gridForWidth RENAME COLUMN $grid_column_identifier TO ID_RSU"
+                def aspectRatio = Geoindicators.RsuIndicators.aspectRatio(datasource, gridForWidth,
+                        "free_external_facade_density", "building_fraction", prefixName)
+                datasource "ALTER TABLE $aspectRatio RENAME COLUMN ID_RSU TO $grid_column_identifier"
+                indicatorTablesToJoin.put(aspectRatio, grid_column_identifier)
+                tablesToDrop << aspectRatio
+
+                // Calculates the street width if needed
+                if (list_indicators_upper.contains("STREET_WIDTH") && building) {
+                    tablesToJoinForWidth.put(aspectRatio, grid_column_identifier)
+                    gridForWidth = Geoindicators.DataUtils.joinTables(datasource, tablesToJoinForWidth, "grid_for_width")
+                    datasource "ALTER TABLE $gridForWidth RENAME COLUMN $grid_column_identifier TO ID_RSU"
+                    def streetWidth = Geoindicators.RsuIndicators.streetWidth(datasource, gridForWidth,
+                            "avg_height_roof_area_weighted", "aspect_ratio", prefixName)
+                    datasource "ALTER TABLE $streetWidth RENAME COLUMN ID_RSU TO $grid_column_identifier"
+                    indicatorTablesToJoin.put(streetWidth, grid_column_identifier)
+                    tablesToDrop << streetWidth
+                }
+            }
+
             if (list_indicators_upper.contains("FREE_EXTERNAL_FACADE_DENSITY")) {
                 def buildingSurfDensity = Geoindicators.RsuIndicators.buildingSurfaceDensity(
                         datasource, freeFacadeDensityExact,
@@ -1806,7 +1918,7 @@ String rasterizeIndicators(JdbcDataSource datasource,
     }
 
 
-    if (list_indicators_upper.contains("BUILDING_HEIGHT_DIST") && building) {
+    if (list_indicators_upper.contains("BUILDING_HEIGHT_DISTRIBUTION") && building) {
         if (!buildingCutted) {
             buildingCutted = cutBuilding(datasource, grid, building)
         }
@@ -1863,10 +1975,17 @@ String rasterizeIndicators(JdbcDataSource datasource,
                 tablesToDrop << tesselatedSeaLandTab
 
                 // Modify columns name to postfix with "_FRACTION"
-                datasource """ 
-                            ALTER TABLE ${upperScaleAreaStatistics} RENAME COLUMN TYPE_LAND TO LAND_FRACTION;
-                            ALTER TABLE ${upperScaleAreaStatistics} RENAME COLUMN TYPE_SEA TO SEA_FRACTION;
-                            ALTER TABLE ${upperScaleAreaStatistics} DROP COLUMN THE_GEOM;"""
+                List sea_land_cols = datasource.getColumnNames(upperScaleAreaStatistics)
+                def alterSeaLand = ""
+                if (sea_land_cols.contains("TYPE_LAND")) {
+                    alterSeaLand += "ALTER TABLE ${upperScaleAreaStatistics} RENAME COLUMN TYPE_LAND TO LAND_FRACTION;"
+                }
+                if (sea_land_cols.contains("TYPE_SEA")) {
+                    alterSeaLand += "ALTER TABLE ${upperScaleAreaStatistics} RENAME COLUMN TYPE_SEA TO SEA_FRACTION;"
+                }
+                datasource.execute(""" 
+                            $alterSeaLand
+                            ALTER TABLE ${upperScaleAreaStatistics} DROP COLUMN THE_GEOM;""")
                 indicatorTablesToJoin.put(upperScaleAreaStatistics, grid_column_identifier)
 
             }
@@ -1934,16 +2053,8 @@ String rasterizeIndicators(JdbcDataSource datasource,
     }
 
     //Join all indicators at grid scale
-    def joinGrids = Geoindicators.DataUtils.joinTables(datasource, indicatorTablesToJoin, grid_indicators_table)
+    Geoindicators.DataUtils.joinTables(datasource, indicatorTablesToJoin, grid_indicators_table)
 
-    //Compute the aspect_ratio
-    if (list_indicators_upper.contains("ASPECT_RATIO") && building) {
-        //Because all other indicators have been yet computed we just alter the table with the aspect_ratio column
-        datasource.execute("""
-        ALTER TABLE $grid_indicators_table ADD COLUMN ASPECT_RATIO DOUBLE PRECISION;
-        UPDATE $grid_indicators_table SET ASPECT_RATIO = case when building_fraction = 1 then null else  free_external_facade_density / (1 - building_fraction) end
-        """.toString())
-    }
     //Execute commands
     datasource.execute(sqlUpdateCommand.join(" "))
 
@@ -1957,6 +2068,8 @@ String rasterizeIndicators(JdbcDataSource datasource,
 
     return grid_indicators_table
 }
+
+
 
 /**
  * Method to cut the building with a grid or any other table
@@ -2187,9 +2300,9 @@ Map sprawlIndicators(JdbcDataSource datasource, String grid_indicators, String i
     String sprawl_areas
     String cool_areas
     if (list_indicators_upper.intersect(["URBAN_SPRAWL_AREAS", "URBAN_SPRAWL_DISTANCES", "URBAN_SPRAWL_COOL_DISTANCES"]) && grid_indicators) {
-        sprawl_areas = Geoindicators.SpatialUnits.computeSprawlAreas(datasource, grid_indicators, distance )
+        sprawl_areas = Geoindicators.SpatialUnits.computeSprawlAreas(datasource, grid_indicators, distance)
     }
-    if (sprawl_areas && datasource.getRowCount(sprawl_areas)>0) {
+    if (sprawl_areas && datasource.getRowCount(sprawl_areas) > 0) {
         //Compute the distances
         if (list_indicators_upper.contains("URBAN_SPRAWL_DISTANCES")) {
             String inside_sprawl_areas = Geoindicators.GridIndicators.gridDistances(datasource, sprawl_areas, grid_indicators, id_grid, false)
@@ -2211,8 +2324,8 @@ Map sprawlIndicators(JdbcDataSource datasource, String grid_indicators, String i
         }
         if (list_indicators_upper.contains("URBAN_SPRAWL_COOL_DISTANCES")) {
             cool_areas = Geoindicators.SpatialUnits.extractCoolAreas(datasource, grid_indicators, sprawl_areas, (distance / 2) as float)
-            if (cool_areas && datasource.getRowCount(cool_areas)>0) {
-                String inverse_cool_areas = Geoindicators.SpatialUnits.inversePolygonsLayer(datasource, sprawl_areas,cool_areas)
+            if (cool_areas && datasource.getRowCount(cool_areas) > 0) {
+                String inverse_cool_areas = Geoindicators.SpatialUnits.inversePolygonsLayer(datasource, sprawl_areas, cool_areas)
                 if (inverse_cool_areas) {
                     tablesToDrop << inverse_cool_areas
                     String cool_distances = Geoindicators.GridIndicators.gridDistances(datasource, inverse_cool_areas, grid_indicators, id_grid, false)

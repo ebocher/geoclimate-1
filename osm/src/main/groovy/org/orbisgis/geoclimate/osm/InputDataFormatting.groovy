@@ -785,7 +785,7 @@ String formatImperviousLayer(JdbcDataSource datasource, String impervious, Strin
                         int epsg = geom.getSRID()
                         if (!geom.isEmpty()) {
                             def plant_source = row."plant:source"
-                            if(plant_source && plant_source.toLowerCase()!="wind") {
+                            if(!plant_source || plant_source.toLowerCase() != "wind") {
                                 for (int i = 0; i < geom.getNumGeometries(); i++) {
                                     Geometry subGeom = geom.getGeometryN(i)
                                     if (!subGeom.isEmpty()) {

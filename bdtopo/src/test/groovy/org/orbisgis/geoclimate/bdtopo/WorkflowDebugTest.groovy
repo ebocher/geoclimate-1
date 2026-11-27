@@ -143,7 +143,7 @@ class WorkflowDebugTest {
                         6515013.5663,
                         842413.6146
                 ]]
-        locations = ["31555"]//"""31069"]
+        locations = ["31069"]//"""310693"] 31555"]
         String directory = "/tmp/bdtopo3"
         File dirFile = new File(directory)
         dirFile.delete()
@@ -164,9 +164,9 @@ class WorkflowDebugTest {
                 "parameters"  :
                         ["distance"    : 0,
                          rsu_indicators: [
-                                 "indicatorUse": ["LCZ","UTRF"]//, "TEB"]
+                                 "indicatorUse": ["LCZ"]//,"UTRF"]//, "TEB"]
 
-                         ],
+                         ]
                          /*"grid_indicators": [
                                  "x_size"    : 100,
                                  "y_size"    : 100,

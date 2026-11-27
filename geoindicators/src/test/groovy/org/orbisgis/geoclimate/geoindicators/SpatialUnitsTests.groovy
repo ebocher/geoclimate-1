@@ -43,7 +43,7 @@ class SpatialUnitsTests {
                                password    : 'orbisgis',
                                url         : 'jdbc:postgresql://localhost:5432/'
     ]
-    static POSTGIS postGIS;
+    static POSTGIS postGIS
 
     private static H2GIS h2GIS
 
@@ -95,6 +95,16 @@ class SpatialUnitsTests {
         assert h2GIS.getSpatialTable(outputTable).save(new File(folder, "tsu.shp").getAbsolutePath(), true)
         def countRows = h2GIS.firstRow "select count(*) as numberOfRows from $outputTable"
         assert 237 == countRows.numberOfRows
+
+        // No overlap, and the box now touches the polygon below it
+        def topo = h2GIS.firstRow("""SELECT SUM(ST_AREA(ST_INTERSECTION(a.the_geom, b.the_geom))) AS overlap,
+                        SUM(CASE WHEN ST_TOUCHES(a.the_geom, b.the_geom) THEN 1 ELSE 0 END) AS touches
+                        FROM $outputTable a, $outputTable b WHERE a.id_rsu < b.id_rsu""".toString())
+        assertEquals(0d, topo.overlap as double, 1e-9)
+        // No TSU has a part narrower than 2 cm anymore
+        def thin = h2GIS.firstRow("""SELECT COUNT(*) AS nb FROM $outputTable
+                        WHERE ST_AREA(ST_DIFFERENCE(the_geom, ST_BUFFER(ST_BUFFER(the_geom, -0.01, 'join=mitre'), 0.06, 'join=mitre'))) > 1e-6""".toString())
+        assertEquals(0, thin.nb)
     }
 
     @Test

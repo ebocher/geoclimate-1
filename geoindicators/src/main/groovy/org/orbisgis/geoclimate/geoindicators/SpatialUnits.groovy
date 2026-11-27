@@ -20,6 +20,7 @@
 package org.orbisgis.geoclimate.geoindicators
 
 import groovy.transform.BaseScript
+import jts.CoverageCleaner
 import org.h2.value.ValueDouble
 import org.h2.value.ValueGeometry
 import org.h2gis.functions.spatial.create.ST_MakeGrid
@@ -106,6 +107,17 @@ String createTSU(JdbcDataSource datasource, String zone,
  * @param area TSU less or equals than area are removed
  * @return A database table name and the name of the column ID
  */
+/**
+ * This process is used to create the Topographical Spatial Units (TSU)
+ *
+ * @param inputTableName The input spatial table to be processed
+ * @param zone The zone table to keep the TSU inside
+ * Default value is empty so all TSU are kept.
+ * @param prefixName A prefix used to name the output table
+ * @param datasource A connection to a database
+ * @param area TSU less or equals than area are removed
+ * @return A database table name and the name of the column ID
+ */
 String createTSU(JdbcDataSource datasource, String inputTableName, String zone,
                  double area = 1d, String prefixName) throws Exception {
     def COLUMN_ID_NAME = "id_rsu"
@@ -114,6 +126,7 @@ String createTSU(JdbcDataSource datasource, String inputTableName, String zone,
     debug "Creating the reference spatial units"
     // The name of the outputTableName is constructed
     def outputTableName = prefix prefixName, BASE_NAME
+    def tablesToDRop =[]
 
     if (!inputTableName) {
         throw new IllegalArgumentException("The input data to compute the TSU cannot be null or empty")
@@ -123,31 +136,62 @@ String createTSU(JdbcDataSource datasource, String inputTableName, String zone,
     if (area <= 0) {
         throw new IllegalArgumentException("The area value to filter the TSU must be greater to 0")
     }
+    // Create the polygons
+    def polygon_width_tolerance = 0.01
+    def bufferParams = "'quad_segs=2 endcap=flat join=mitre'"
+    def source_polygons_tsu = postfix("source_polygons_tsu")
+    tablesToDRop<<source_polygons_tsu
+    datasource.execute("""DROP TABLE IF EXISTS $source_polygons_tsu;
+        CREATE TABLE $source_polygons_tsu AS
+            SELECT $COLUMN_ID_NAME, the_geom
+            FROM (SELECT CAST((row_number() over()) as Integer) AS $COLUMN_ID_NAME,
+                         ST_BUFFER(ST_BUFFER(p.the_geom, -$polygon_width_tolerance, $bufferParams), $polygon_width_tolerance, $bufferParams) AS the_geom
+                  FROM ST_EXPLODE('(SELECT ST_POLYGONIZE(ST_UNION(ST_ACCUM(the_geom))) AS the_geom
+                                    FROM $inputTableName)') AS p
+                  WHERE ST_AREA(p.the_geom) > $area) AS foo
+            WHERE NOT ST_ISEMPTY(the_geom)""".toString())
+
+    // Kept only the polygons in the zone
     if (zone) {
-        datasource.createSpatialIndex(zone)
-        //Create the polygons from the TSU lines
-        datasource.execute(""" DROP TABLE IF EXISTS $outputTableName;
-        CREATE TABLE $outputTableName AS 
-            SELECT  $COLUMN_ID_NAME, THE_GEOM
-            FROM (SELECT   CAST((row_number() over()) as Integer) as  $COLUMN_ID_NAME,
-                            ST_BUFFER(ST_BUFFER(the_geom,-0.01, 'quad_segs=2 endcap=flat  join=mitre'),0.01, 'quad_segs=2 endcap=flat join=mitre') AS the_geom 
-                  FROM ST_EXPLODE('(SELECT ST_POLYGONIZE(ST_UNION(ST_ACCUM(the_geom))) AS the_geom 
-                                    FROM $inputTableName)') 
-                  WHERE st_area(the_geom) > $area)
-            WHERE NOT ST_ISEMPTY(the_geom)
-        """)
-    } else {
-        datasource """
-                    DROP TABLE IF EXISTS $outputTableName;
-                    CREATE TABLE $outputTableName AS 
-                        SELECT $COLUMN_ID_NAME, THE_GEOM
-                        FROM (SELECT    CAST((row_number() over()) as Integer)  AS $COLUMN_ID_NAME, 
-                                        ST_SETSRID(ST_BUFFER(ST_BUFFER(the_geom,-0.01, 2), 0.01, 2), $epsg) AS the_geom 
-                                FROM ST_EXPLODE('(SELECT ST_POLYGONIZE(ST_UNION(ST_ACCUM(the_geom))) AS the_geom 
-                                                  FROM $inputTableName)')
-                                WHERE st_area(the_geom) > $area)
-                        WHERE NOT ST_ISEMPTY(the_geom)""".toString()
+        datasource.createSpatialIndex(source_polygons_tsu, "the_geom")
+        def tsu_in_zone = postfix("tsu_in_zone")
+        datasource.execute("""DROP TABLE IF EXISTS $tsu_in_zone;
+            CREATE TABLE $tsu_in_zone AS
+                SELECT o.$COLUMN_ID_NAME, o.the_geom
+                FROM $source_polygons_tsu o, $zone z
+                WHERE o.the_geom && z.the_geom
+                AND ST_INTERSECTS(z.the_geom, ST_POINTONSURFACE(o.the_geom));
+            DROP TABLE IF EXISTS $source_polygons_tsu;
+            ALTER TABLE $tsu_in_zone RENAME TO $source_polygons_tsu;
+            """.toString())
+        tablesToDRop<<tsu_in_zone
     }
+
+    // Use CoverageCleaner to remove the gaps and snap the TSU
+    //    - the polygons are snapped and noded together, so neighbouring TSU share exactly the same edges,
+    //    - every gap narrower than 2 * polygon_width_tolerance (the removed thin parts) is merged
+    //      into the adjacent TSU with which it shares the longest border.
+    List<Geometry> opened = []
+    datasource.eachRow("SELECT the_geom FROM $source_polygons_tsu ORDER BY $COLUMN_ID_NAME".toString()) { row ->
+        opened << (row.the_geom as Geometry)
+    }
+    Geometry[] cleaned = opened ? CoverageCleaner.cleanGapWidth(opened as Geometry[], (2 * polygon_width_tolerance) as double) : new Geometry[0]
+
+    //Save the results in the output table
+    datasource.execute("""DROP TABLE IF EXISTS $outputTableName;
+        CREATE TABLE $outputTableName ($COLUMN_ID_NAME INTEGER, the_geom GEOMETRY${epsg > 0 ? "(GEOMETRY, $epsg)" : ""});
+        """.toString())
+    datasource.withBatch(1000, "INSERT INTO $outputTableName ($COLUMN_ID_NAME, the_geom) VALUES (?, ?)".toString()) { ps ->
+        int id = 1
+        for (Geometry geom : cleaned) {
+            if (geom == null || geom.isEmpty()) {
+                continue
+            }
+            geom.setSRID(epsg)
+            ps.addBatch([id++, geom])
+        }
+    }
+    datasource.dropTable(tablesToDRop)
     debug "Reference spatial units table created"
     return outputTableName
 }
